@@ -1,0 +1,260 @@
+CN111311004B - 一种考虑切割效率与利用率的分层迭代式排样优化方法- Google Patents# CN111311004B - 一种考虑切割效率与利用率的分层迭代式排样优化方法- Google Patents
+一种考虑切割效率与利用率的分层迭代式排样优化方法[Download PDF](https://patentimages.storage.googleapis.com/6f/82/be/472874cd0b630b/CN111311004B.pdf)## Info
+Publication numberCN111311004BCN111311004BCN202010106631.7ACN202010106631ACN111311004BCN 111311004 BCN111311004 BCN 111311004BCN 202010106631 ACN202010106631 ACN 202010106631ACN 111311004 BCN111311004 BCN 111311004BAuthorityCNChinaPrior art keywordscuttinglayoututilization rateoptimizationcostPrior art date2020-02-21Legal status (The legal status is an assumption and is not a legal conclusion. Google has not performed a legal analysis and makes no representation as to the accuracy of the status listed.)ActiveApplication numberCN202010106631.7AOther languages[English(en)](https://patents.google.com/patent/CN111311004B/en)Other versions[CN111311004A(zh](https://patents.google.com/patent/CN111311004A/zh)Inventor张�浩刘强严都喜吴兰彬张定Current Assignee (The listed assignees may be inaccurate. Google has not performed a legal analysis and makes no representation or warranty as to the accuracy of the list.)Guangdong University of TechnologyOriginal AssigneeGuangdong University of TechnologyPriority date (The priority date is an assumption and is not a legal conclusion. Google has not performed a legal analysis and makes no representation as to the accuracy of the date listed.)2020-02-21Filing date2020-02-21Publication date2020-10-092020-02-21Application filed by Guangdong University of TechnologyfiledCriticalGuangdong University of Technology2020-02-21Priority to CN202010106631.7ApriorityCriticalpatent/CN111311004B/zh2020-06-19Publication of CN111311004ApublicationCriticalpatent/CN111311004A/zh2020-10-09Application grantedgrantedCritical2020-10-09Publication of CN111311004BpublicationCriticalpatent/CN111311004B/zhStatusActivelegal-statusCriticalCurrent2040-02-21Anticipated expirationlegal-statusCritical## Links
+* [Espacenet](https://worldwide.espacenet.com/publicationDetails/biblio?CC=CN&NR=111311004B&KC=B&FT=D)
+* [Global Dossier](https://globaldossier.uspto.gov/result/application/CN/202010106631/1)
+* [Discuss](https://patents.stackexchange.com/questions/tagged/CN111311004B)
+## Images
+* ![](https://patentimages.storage.googleapis.com/dc/a1/5b/146b25f88bf5b9/HDA0002388680250000011.png)
+* * * * * * * * * * * * * * * * * * * * * * * ![](https://patentimages.storage.googleapis.com/1f/c4/e5/26d6fd98b89539/HDA0002388680250000012.png)
+* * ![](https://patentimages.storage.googleapis.com/5c/ea/23/a190145edf6748/HDA0002388680250000021.png)
+* * * * ![](https://patentimages.storage.googleapis.com/3a/1b/03/4a866c47489d64/HDA0002388680250000031.png)
+* ## Classifications
+* * G—PHYSICS
+* G06—COMPUTING OR CALCULATING; COUNTING
+* G06Q—INFORMATION AND COMMUNICATION TECHNOLOGY [ICT] SPECIALLY ADAPTED FOR ADMINISTRATIVE, COMMERCIAL, FINANCIAL, MANAGERIAL OR SUPERVISORY PURPOSES; SYSTEMS OR METHODS SPECIALLY ADAPTED FOR ADMINISTRATIVE, COMMERCIAL, FINANCIAL, MANAGERIAL OR SUPERVISORY PURPOSES, NOT OTHERWISE PROVIDED FOR
+* G06Q10/00—Administration; Management
+* G06Q10/04—Forecasting or optimisation specially adapted for administrative or management purposes, e.g. linear programming or "cutting stock problem"
+* G06Q10/043—Optimisation of two dimensional placement, e.g. cutting of clothes or wood
+## Landscapes
+* Business, Economics & Management(AREA)
+* Human Resources & Organizations(AREA)
+* Engineering & Computer Science(AREA)
+* Strategic Management(AREA)
+* Economics(AREA)
+* Marketing(AREA)
+* Game Theory and Decision Science(AREA)
+* Entrepreneurship & Innovation(AREA)
+* Development Economics(AREA)
+* Operations Research(AREA)
+* Quality & Reliability(AREA)
+* Tourism & Hospitality(AREA)
+* Physics & Mathematics(AREA)
+* General Business, Economics & Management(AREA)
+* General Physics & Mathematics(AREA)
+* Theoretical Computer Science(AREA)
+* General Factory Administration(AREA)
+## Abstract
+本发明公开了一种考虑切割效率与利用率的分层迭代式排样优化方法，包括下述步骤：建立模型：结合切割效率与利用率建立最小化总成本的多目标优化模型；切片排版：基于叠板数分层的排样递归算法完成排叠切片；设置阈值：基于利用率阈值的多叉树分层迭代式搜索方法设置阈值；参数分析与优化：对分层迭代式搜索获得的参数进行分析与优化；计算实验与分析：通过实验进行测试与分析，验证算法结果的可行性和有效性；本发明旨在提供一种考虑切割效率与利用率的分层迭代式排样优化方法，提高原材料利用率，能够实现批量切割且能大幅减少切割次数和切割刀数，从而减小原料成本，提高生产效率，降低生产总成本。## Description
+一种考虑切割效率与利用率的分层迭代式排样优化方法技术领域本发明涉及板材排版优化领域，尤其涉及一种考虑切割效率与利用率的分层迭代式排样优化方法。背景技术随着下料问题的研究深入，材料利用率的提高空间已经较小，要使下料总成本最低，还需要联合考虑切割成本优化。目前针对二维排样并考虑切割效率的文献相对较少。Haessler最早研究最小化下料模式问题，他认为多的下料模式数会增加企业成本，因此需要限制下料模式数量，并建立多目标非线性混合整数规划一维下料模型，最小化废料成本及加工成本总和。Cui提出了一种减少切割模式的二维矩形件下料顺序分组启发式算法，胡刚与陈燕提出了一种针对圆片下料顺序启发式算法，将顺序分组启发式算法与递推算法相结合来减少切割下料模式数量。
+综上所述，国内外学者对排样优化问题进行了大量的研究，针对一维下料与切割效率的多目标优化问题研究相对较多，而对二维排样与切割效率联合优化的文献相对较少。需立足于板式类产品行业生产特征与约束，如一刀切约束、分层(换轴)约束、切割约束等；需要充分挖掘搜索过程中的有用信息，利用快速搜索和剪支机制进行迭代优化，在多种可行方案中选择总成本最小的方案，实现板材排样下料与切割效率两个优化目标的整体协调性，实现开料环节的总成本最少。迫切需要一种综合考虑切割效率与材料利用率的高效专用排样优化方法，该方法能提高原料利用率和切割效率，减少加工时间降低切割成本，因此具有十分重要的意义。
+发明内容本发明的目的在于提出一种考虑切割效率与利用率的分层迭代式排样优化方法，提高原材料利用率，能够实现批量切割且能大幅减少切割次数和切割刀数，从而减小原料成本，提高生产效率，降低生产总成本。为达此目的，本发明采用以下技术方案：一种考虑切割效率与利用率的分层迭代式排样优化方法，包括下述步骤：建立模型：结合切割效率与利用率建立最小化总成本的多目标优化模型；排版优化：基于叠板数分层的排样递归算法完成排版优化；分层迭代式搜索：基于利用率阈值的多叉树分层迭代式搜索方法进行排版优化并设置阈值；参数分析与优化：对分层迭代式搜索获得的参数进行分析与优化，并得到算法结果；对三个主要参数的优化，包括：多叉树的层数、利用率阈值的大小以及多叉树子节点个数；计算实验与分析：通过实验进行测试与分析，验证算法结果的可行性和有效性。优选的，在所述建立模型的步骤中，包括二维矩形板材排样优化问题，已知大矩形原料板材，宽度为W，高度为L，需要下料的小矩形工件有n种类型，每种工件宽度为wi，高度为li，数量为di，i∈[1,n]；以使用大板材料最少为优化目标的模型如下：
+求解目标为：[![Figure GDA0002643902550000021](https://patentimages.storage.googleapis.com/92/b6/18/aa7cc16027718f/GDA0002643902550000021.png)](https://patentimages.storage.googleapis.com/92/b6/18/aa7cc16027718f/GDA0002643902550000021.png)
+约束条件为：[![Figure GDA0002643902550000031](https://patentimages.storage.googleapis.com/a2/1b/24/40dedf4db3bbf8/GDA0002643902550000031.png)](https://patentimages.storage.googleapis.com/a2/1b/24/40dedf4db3bbf8/GDA0002643902550000031.png)
+其中j(j＝1,2,…,g)为满足一刀切工艺约束的所有可行排版方案；g为可行的排样方式集P＝[p1,p2,…,pg]中含有的排样方式；xj为第j种排样方式的使用次数；aij(i＝1,2,L,n)为第j种排样方式中包含第i种毛坯数量。
+优选的，在所述建立模型的步骤中，包括板材切割成本最小化问题，以切割成本最小化为优化目标的模型如下：求解目标为：[![Figure GDA0002643902550000032](https://patentimages.storage.googleapis.com/3c/a4/da/b03dfef7d33711/GDA0002643902550000032.png)](https://patentimages.storage.googleapis.com/3c/a4/da/b03dfef7d33711/GDA0002643902550000032.png)
+其中j(j＝1,2,…,g)为满足一刀切工艺约束的所有可行排版方案；g为可行的排样方式集P＝[p1,p2,…,pg]中含有的排样方式；xj为第j种排样方式的使用次数；dp为切割机切割某种材质板材时允许的最大叠层数；C2为每次切换切割版面会增加的切割成本；C3为每刀切割成本；CutNj为切割下料方式jp的版面需要的切割总刀数，包括切割工件以及修边时所有横切与纵切的刀数之和。
+优选的，在所述建立模型的步骤中，包括评估下料与切割协同优化方案，评估的优化目标，即最小化总成本为：[![Figure GDA0002643902550000033](https://patentimages.storage.googleapis.com/0a/f4/cd/4a92cd8e7a37de/GDA0002643902550000033.png)](https://patentimages.storage.googleapis.com/0a/f4/cd/4a92cd8e7a37de/GDA0002643902550000033.png)
+其中j(j＝1,2,…,g)为满足一刀切工艺约束的所有可行排版方案；g为可行的排样方式集P＝[p1,p2,…,pg]中含有的排样方式；xj为第j种排样方式的使用次数；dp为切割机切割某种材质板材时允许的最大叠层数；C1为每块大板原料的成本；C2为每次切换切割版面会增加的切割成本；C3为每刀切割成本；CutNj为切割下料方式jp的版面需要的切割总刀数，包括切割工件以及修边时所有横切与纵切的刀数之和。
+优选的，在所述排版优化的步骤中，包括下述步骤：步骤A1：获取未排版的所有板材切片数据Ri，包括板材切片的长宽尺寸li\*wi以及数量di，当di＝0时，则该切片已排完，删除该切片；
+步骤A2：计算所有未排的切片叠K块板切割时，每层每种切片最大可排放的切片数量为
+[![Figure GDA0002643902550000041](https://patentimages.storage.googleapis.com/72/fc/ee/33d4dcd248f9e6/GDA0002643902550000041.png)](https://patentimages.storage.googleapis.com/72/fc/ee/33d4dcd248f9e6/GDA0002643902550000041.png)
+步骤A3：获取步骤A2中计算切片叠板K块的单层可排放的切片数量Fi>0的所有待排切片集合Qk；
+步骤A4：对待排切片集合Qk中的切片数据进行排版下料优化，调用单版面排样优化算法获得当前最高利用率的一个版面P，利用率为Up，则下料方式jP是可叠板K块大板进行切割，当K值相同时，相同尺寸的原材料先排放的板材可选择的切片大于后排放的板材，先排放的原材料的利用率大于后排放的原材料，板材的利用率为单调递减；
+当Up>＝Utillimt时，跳到步骤A5；
+当Up<Utillimt，且K＝1时，跳到步骤A5；
+当Up<Utillimt，且K>1时，先执行K＝K-1；更新待排切片数据，再执行步骤1；
+步骤A5：添加版面P排版信息和叠板数K到解集{S}中，再更新切片集合Qk的数量，即减去版面P中的切片数量；
+步骤A6：判断所有切片是否都排完，如果未排完，则跳到步骤A4；如果排完了，则算法结束。
+优选的，在所述设置阈值步骤中，具体为：在每一层递归调用的过程中设置多个利用率阈值UtilList{u1,u2,u3,…}，每个阈值作为一个新子节点，再递归调用下一层数据。
+优选的，在所述多叉树分层迭代式搜索方法中，每个节点主要执行以下三个步骤：步骤B1：获取当前所有待排切片的数据；
+步骤B2：依据待排切片数据调用单版面排样优化算法，按利用率由高到低依次优化并获取叠板数为K的所有版面；
+步骤B3：对叠板数为K的所有版面按利用率排序，并按利用率阈值集合UtilList中的多个利用率阈值，将满足条件的版面分成多组，每一组更新其待排切片数据，作为子节点数据的输入，以此递归，完成所有切片排放。
+优选的，在参数分析与优化步骤中，具体为对三个主要参数的优化，包括：多叉树的层数、利用率阈值的大小以及多叉树子节点个数；多叉树的层数，即最大叠板数Kp为3-8，Kp为大于0的整数；
+利用率阈值的大小范围为70％-95％，按等差数列形式设置多个利用率阈值区间：{0.8}、{0.9，0.8}、{0.9，0.8，0.7}、{0.9，0.85，0.8，0.75}、{0.9，0.85，0.8，0.75，0.7}；
+多叉树子节点个数，即利用率阈值个数ChildNode，利用率阈值个数ChildNode与Kp决定整个该多叉树结构的分层迭代式搜索有ChildNode(Kp-1)个可行的排样方案，并输出最好的解作为最终解输出。
+本发明采用上述结构，结合利用率与切割效率的协同优化问题进行描述，并建立了使用原材料和切割加工时间造成的总成本最小化的数学模型；并提出了一种基于叠板数分层的排样递归算法及流程；在该算法的基础上采用多个利用率阈值进行多叉树分层迭代式搜索，实现切割效率与利用率的协同；再对分层迭代式搜索过程中的主要参数进行了分析与优化；最后进行计算实验，实验结果表明该方法能提高原材料利用率、能够实现批量切割且能大幅减少切割次数和切割刀数，从而减小原料成本，提高生产效率，降低生产总成本。与同类算法和工业应用软件相比，算法具有一定优势，能为企业节省大量成本。附图说明附图对本发明做进一步说明，但附图中的内容不构成对本发明的任何限制。图1是本发明中二阶和三阶分层排样示例图；
+图2是本发明中基于叠板数分层的排样递归算法的流程图；
+图3是本发明中基于多利用率阈值的多叉树分层迭代搜索方法示例图；
+图4是本发明中ATP48的下料方案示意图。
+具体实施方式下面结合附图并通过具体实施方式来进一步说明本发明的技术方案。参阅图1至图4所示，本实施例的一种考虑切割效率与利用率的分层迭代式排样优化方法，包括下述步骤：
+建立模型：结合切割效率与利用率建立最小化总成本的多目标优化模型；排版优化：基于叠板数分层的排样递归算法完成排版优化；分层迭代式搜索：基于利用率阈值的多叉树分层迭代式搜索方法并设置阈值；参数分析与优化：对分层迭代式搜索获得的参数进行分析与优化；计算实验与分析：通过实验进行测试与分析，验证算法结果的可行性和有效性。考虑切割效率与利用率的排样优化问题，旨在最大限度地降低使用原材料和切割加工时间造成的总成本。这其中包含两个优化问题：1、满足一刀切约束的二维矩形板材排样优化问题，即完成一批订单切割任务使用的原材料板材最少；2、板材切割成本最小化问题，即完成一批订单切割任务使用时间最少，效率最高的切割方式。针对本专利的部分名词及概念，我们做如下的定义：
+定义1排样方式：满足一刀切等工艺约束的所有可行排版方案j(j＝1,2,…,g)。
+定义2下料方案：由多个排样方式组成一个满足订单切割任务要求的下料方案，下料方案包含已选的排样方式和排样方式所使用(切割)的次数xj。
+定义3下料方式数：下料方案中包含的排样方式数Kp(即xj>0的个数)。
+定义4最大叠板数：切割机切割某种材质板材时允许的最大叠层数dp(与板厚、切割刀具长度和受力大小相关)。
+定义4下料切割次数：完成下料方案中所有切割任务需要在切割机上的切割次数，相同排样方式的版面可叠板切割，则下料方案中实际下料总切割次数为PC。
+[![Figure GDA0002643902550000071](https://patentimages.storage.googleapis.com/e6/fb/54/188aee46b66f93/GDA0002643902550000071.png)](https://patentimages.storage.googleapis.com/e6/fb/54/188aee46b66f93/GDA0002643902550000071.png)
+定义5版面切割刀数：指切割下料方式jp的版面需要的切割总刀数CutNj，包括切割工件以及修边时所有横切与纵切的刀数之和。
+二维矩形下料问题广泛存在于板料冲压、金属切割、玻璃切割、家具下料、报刊排版、造船等制造行业中。经典下料问题研究给定原材料的情况下，确定每种切割排样方式及其切割次数以满足所有订单对每种毛坯的生产需求，使得所使用的原片板材最少，该问题属于具有最高计算复杂度的NPC问题。传统研究方法主要以最小化原料成本、最大化原材料利用率、最小化废料为目标进行研究，而在实际生产过程中，原料成本只是开料环节的一部分，随着企业生产经营的完善，企业开始逐步重视切割加工效率与成本对生产的影响，因此需要对下料与切割环节进行协同优化，提高原料利用率，进行批量(叠板)切割来降低切割成本具有十分重要的意义。
+二维矩形板材排样优化问题：在工程应用中，由于板材切割受设备加工要求的限制，排样方式通常需要满足一刀切约束；为了保证板材质量与尺寸精度，需要对原片板材进行大板修边和预留切割锯缝；为了工人操作的友好性，排样方式通常需要满足切割方向切换即刀具换轴的次数限制等约束。板材二维矩形排样优化问题一般为需要满足一刀切的分层式分割排样方案优化问题，而最常用的分层排样有二阶(Two-Stage)和三阶(Three-Stage)排样，这两类问题被划分为四种不同类型，如图1所示，分别为二阶精确一刀切(2EGC)、二阶非精确一刀切(2NEGC)、三阶精确一刀切(3EGC)、三阶非精确一刀切(3NEGC)，其中阴影部分代表废料。分层排样版面的阶数越多，切割越复杂，排版利用率越高；而阶数越少，切割相对越简单，但排版利用率会降低。综合考虑利用率、切割效率与工厂实际应用情况，本方法采用3EGC的类型进行排版，3EGC是包含2EGC和2NEGC的，因此排版利用率和切割效率都相对较高。
+板材切割成本最小化问题描述：即完成一批订单切割任务使用时间最少，效率最高。而下料方案切割效率主要由两方面影响：1、下料切割次数，下料切割次数影响工件装夹与定位调整次数，进而影响切割时间和成本，由于相同版面的排版可以叠板切割(总厚度<刀片切割最大厚度)，叠板切割可以减少切割次数，因此数控切割版面数越少，切割总时间越短，效率越高；2、下料方式的复杂程度：版面布局复杂程度影响切割方向切换次数、切割路径与空行程长度、掰片及掰片后搬运的复杂程度、掰片时损片概率、数控编程复杂度等，进而影响切割时间和刀具磨损等。每种下料方式包含毛坯种类越少，布局越简单，切割越友好，切割、掰片与落架过程越易操作，效率越高。
+针对诸多下料优化方法追求高原材料利用率，而对实际切割加工成本考虑不足的现状，提出一种考虑切割效率与利用率的分层迭代式排样优化方法及系统。首先对考虑下料利用率与切割效率的协同优化问题进行描述，并建立了使用原材料和切割加工时间造成的总成本最小化的数学模型；然后针对该问题提出了一种基于叠板数分层的排样递归算法及流程；在该算法的基础上采用多个利用率阈值进行多叉树分层迭代式搜索，实现切割效率与利用率的协同；再对分层迭代搜索过程中的主要参数进行了分析与优化；最后进行计算实验，实验结果表明该方法能提高原材料利用率、能够实现批量切割且能大幅减少切割次数和切割刀数，从而减小原料成本，提高生产效率，降低生产总成本。与同类算法和工业应用软件相比，算法具有一定优势，能为企业节省大量成本。优选的，在所述建立模型的步骤中，包括二维矩形板材排样优化问题，已知大矩形原料板材，宽度为W，高度为L，需要下料的小矩形工件有n种类型，每种工件宽度为wi，高度为li，数量为di，i∈[1,n]；以使用大板材料最少为优化目标的模型如下：
+求解目标为：[![Figure GDA0002643902550000091](https://patentimages.storage.googleapis.com/58/46/61/93e430ea443d52/GDA0002643902550000091.png)](https://patentimages.storage.googleapis.com/58/46/61/93e430ea443d52/GDA0002643902550000091.png)
+约束条件为：[![Figure GDA0002643902550000092](https://patentimages.storage.googleapis.com/7f/cb/c0/106a97b6f3a82e/GDA0002643902550000092.png)](https://patentimages.storage.googleapis.com/7f/cb/c0/106a97b6f3a82e/GDA0002643902550000092.png)
+其中j(j＝1,2,…,g)为满足一刀切等工艺约束的所有可行排版方案；g为可行的排样方式集P＝[p1,p2,…,pg]中含有的排样方式；xj为第j种排样方式的使用次数；aij(i＝1,2,L,n)为第j种排样方式中包含第i种毛坯数量。
+针对板材切割过程中实际生产工艺约束等要求，需满足以下要求：(1)原料板材数量无限制，即板材足够排布所有工件；
+(2)毛坯的长或是宽必须和板材的长或是宽平行；
+(3)小矩形工件之间没有重叠的区域；
+(4)工件不能超出原料板材的边缘；
+(5)矩形要满足一刀切约束；
+(6)满足一定的纹理要求，即工件不可旋转；
+(7)换轴次数小于4，且排版方案为三阶精确一刀切类型。
+优选的，在所述建立模型的步骤中，包括板材切割成本最小化问题，以切割成本最小化为优化目标的模型如下：求解目标为：[![Figure GDA0002643902550000101](https://patentimages.storage.googleapis.com/64/c6/ae/dd3feef4ea3469/GDA0002643902550000101.png)](https://patentimages.storage.googleapis.com/64/c6/ae/dd3feef4ea3469/GDA0002643902550000101.png)
+其中j(j＝1,2,…,g)为满足一刀切等工艺约束的所有可行排版方案；g为可行的排样方式集P＝[p1,p2,…,pg]中含有的排样方式；xj为第j种排样方式的使用次数；dp为切割机切割某种材质板材时允许的最大叠层数；C2为每次切换切割版面会增加的切割成本；C3为每刀切割成本；CutNj为切割下料方式jp的版面需要的切割总刀数，包括切割工件以及修边时所有横切与纵切的刀数之和。
+板材切割成本最小化问题是指完成一批板材订单切割任务使用时间最少，效率最高，加工成本最小的切割方案,其切割成本主要与下料切割次数和版面切割复杂程度有关。切割机每次切割需要进行工件装夹、定位调整、程序切换等，每次切换切割版面都会增加切割时间和切割成本，每次切换切割版面会增加的切割成本为C2。下料方式的复杂程度直接影响切割时间的长短，而其加工时间主要受该版面切割刀数CutN的影响，切割刀数包括切割工件以及修边时所有横纵切割的刀数，每刀切割成本为C3。
+优选的，在所述建立模型的步骤中，包括评估下料与切割协同优化方案，评估的优化目标，即最小化总成本为：[![Figure GDA0002643902550000111](https://patentimages.storage.googleapis.com/23/65/fa/95c16669fefdb7/GDA0002643902550000111.png)](https://patentimages.storage.googleapis.com/23/65/fa/95c16669fefdb7/GDA0002643902550000111.png)
+其中j(j＝1,2,…,g)为满足一刀切等工艺约束的所有可行排版方案；g为可行的排样方式集P＝[p1,p2,…,pg]中含有的排样方式；xj为第j种排样方式的使用次数；dp为切割机切割某种材质板材时允许的最大叠层数；C1为每块大板原料的成本；C2为每次切换切割版面会增加的切割成本；C3为每刀切割成本；CutNj为切割下料方式jp的版面需要的切割总刀数，包括切割工件以及修边时所有横切与纵切的刀数之和。
+考虑切割效率和利用率的分层迭代式排样优化方法最终能输出多种优化方案，需要从中找出一种最优方案作为输出的最终解，因此需要一种合理的方法对各优化方案进行评估。根据实际生产成本作为评价指标不失为一条有效的评价方法，即计算每一种方案的原料和切割加工总成本，从中选择成本最小的方案。旨在最大限度地降低原材料成本和切割加工时间造成的总成本，使切割下料环节总成本最小，可以建立最小化总成本的多目标优化模型。该方法中优化参数参考企业实际生产加工成本进行设置，采用C1＝90，C2＝4.0，C3＝0.5。不过大部分企业目前加工成本比较难精确的折算出来，一定程度上也和生产进度有关，高峰的时候加工时间成本占比大点，可适当增大C2和C3的值；低峰时候加工时间成本占比小点，可适当减小C2和C3的值。
+优选的，在所述排版优化的步骤中，包括下述步骤：步骤A1：获取未排版的所有板材切片数据Ri，包括板材切片的长宽尺寸li\*wi以及数量di，当di＝0时，则该切片已排完，删除该切片；
+步骤A2：计算所有未排的切片叠K块板切割时，每层每种切片最大可排放的切片数量为
+[![Figure GDA0002643902550000121](https://patentimages.storage.googleapis.com/0d/ee/2e/d5b72b39f491ea/GDA0002643902550000121.png)](https://patentimages.storage.googleapis.com/0d/ee/2e/d5b72b39f491ea/GDA0002643902550000121.png)
+步骤A3：获取步骤A2中计算切片叠板K块的单层可排放的切片数量Fi>0的所有待排切片集合Qk；
+步骤A4：对待排切片集合Qk中的切片数据进行排版下料优化，调用单版面排样优化算法获得当前最高利用率的一个版面P，利用率为Up，则下料方式jP是可叠板K块大板进行切割，当K值相同时，相同尺寸的原材料先排放的板材可选择的切片大于后排放的板材，先排放的原材料的利用率大于后排放的原材料，板材的利用率为单调递减；
+当Up>＝Utillimt时，跳到步骤A5；
+当Up<Utillimt，且K＝1时，跳到步骤A5；
+当Up<Utillimt，且K>1时，先执行K＝K-1；更新待排切片数据，再执行步骤1；
+步骤A5：添加版面P排版信息和叠板数K到解集{S}中，再更新切片集合Qk的数量，即减去版面P中的切片数量；
+步骤A6：判断所有切片是否都排完，如果未排完，则跳到步骤A4；如果排完了，则算法结束。
+在考虑切割效率的的排样优化问题中，叠板的数量越多，切割效率会越高，因此提出了一种基于叠板数分层的排样递归算法。首先排叠K块板的切割方案，选取利用率较高的部分下料方式，再排叠(K-1)块板的切割方案，以此类推直到不能叠板，且所有工件排完为止。
+步骤A4中先设置原材料利用率上限为1，后面每块板材利用率的上限是它上一块已排板材的利用率。
+其中Utillimt为版面利用率的阈值，如Utillimt＝80％，则当K>1时，只选取利用率大于等于80％的下料方式，当K＝1时，这个阈值就不起作用，直到所有切片都排完。
+优选的，在所述设置阈值步骤中，具体为：在每一层递归调用的过程中设置多个利用率阈值UtilList{u1,u2,u3,…}，每个阈值作为一个新子节点，再递归调用下一层数据。
+在基于叠板数分层的排样递归搜索算法中，当叠板数K>1时递归的调用单版面排样优化算法，递归获取利用率大于Utillimt的所有版面，再计算叠板数为K-1的版面，直到叠板数为1时，获取所有版面。算法中参数Utillimt值的大小将对解的质量产生较大影响，如果Utillimt设置过大，则叠板数较大时生成的版面较少，叠板数K＝1的版面较多，最后会使得下料总切割次数过多导致切割时间过长，从而增加切割成本。如果Utillimt设置过小，则叠板数较大时生成版面较多，其中包括一些利用率较低的版面，最后使总利用率较低导致使用原料板数过多，从而增加生产原料成本。
+为了解决Utillimt值设置不合理的问题，在基于叠板数分层的排样递归算法的基础上提出了基于多利用率阈值的多叉树分层迭代式搜索方法，即在每一层递归调用的过程中设置多个利用率阈值UtilList{u1,u2,u3,…}，每个阈值作为一个新子节点，再递归调用下一层数据。基于多叉树的递归搜索框架示例如图3所示，其中UtilList＝{0.9，0.8，0.7}，最大叠板数Kp＝4。由示例可知UtilList中利用率阈值个数即为多叉树每个节点的子节点数，最大叠板数为多叉树的层数。
+优选的，在所述多叉树分层迭代式搜索方法中，每个节点主要执行以下三个步骤：步骤B1：获取当前所有待排切片的数据；
+步骤B2：依据待排切片数据调用单版面排样优化算法，按利用率由高到低依次优化并获取叠板数为K的所有版面；
+步骤B3：对叠板数为K的所有版面按利用率排序，并按利用率阈值集合UtilList中的多个利用率阈值，将满足条件的版面分成多组，每一组更新其待排切片数据，作为子节点数据的输入，以此递归，完成所有切片排放。
+优选的，在参数分析与优化步骤中，具体为对三个主要参数的优化，包括：多叉树的层数、利用率阈值的大小以及多叉树子节点个数；多叉树的层数，即最大叠板数Kp为3-8，Kp为大于0的整数；
+利用率阈值的大小范围为70％-95％，按等差数列形式设置多个利用率阈值区间：{0.8}、{0.9，0.8}、{0.9，0.8，0.7}、{0.9，0.85，0.8，0.75}、{0.9，0.85，0.8，0.75，0.7}；
+多叉树子节点个数，即利用率阈值个数ChildNode，利用率阈值个数ChildNode与Kp决定整个该多叉树结构的分层迭代式搜索有ChildNode(Kp-1)个可行的排样方案，并输出最好的解作为最终解输出。
+基于多利用率阈值的多叉树分层迭代式搜索方法对协同优化两个目标(下料利用率与切割效率)影响比较大的参数主要包括：多叉树的层数、利用率阈值的大小、多叉树子节点个数。其中多叉树的层数由最大叠板数Kp决定，它与原材料厚度和切割刀具允许的最大切割长度有关，Kp值越大，多叉树的层次越多，搜索空间越大，叠板切割效率越好；Kp值越小，多叉树的层次越少，搜索空间相对减少，叠板切割效率减弱。利用率阈值的大小直接影响整个搜索结果的好坏，如果利用率阈值设置过大，会使得排版方案材料利用率较高，但切割效率较低；如果利用率阈值设置过小，会使得排版方案利用率较低，而切割效率较高。为了平衡可行解中利用率与切割效率之间的协同关系，采用等差数列的多个利用率阈值进行迭代式搜索，这样就能在多个阈值中找到整体效果较好的排样方案。分层迭代式协同优化的搜索空间除了受最大叠板数影响外，还与多叉树子节点个数密切相关。多叉树子节点个数即利用率阈值个数，按利用率阈值对子节点搜索空间进行分类，当子节点数为1时，即为基于叠板数分层的排样递归算法，在该算法的基础上通过增加子节点数(利用率阈值个数)而放大整个搜索空间，从而实现下料与切割的协同优化。随着多叉树子节点个数的增加，搜索空间随指数增长。
+多叉树的层数即最大叠板数Kp取值一般为[3,8]之间，主要由板材材质与刀具决定。根据统计实际排样数据可知板材排样利用率主要集中在70％-95％之间，基于此可设置利用率阈值区间在该范围，并按等差数列形式设置多个利用率阈值，如{0.8}、{0.9，0.8}、{0.9，0.8，0.7}、{0.9，0.85，0.8，0.75}、{0.9，0.85，0.8，0.75，0.7}等。利用率阈值个数ChildNode与Kp决定整个该多叉树结构的分层迭代式搜索有ChildNode(Kp-1)个可行的排样方案，在其中找出最好的解作为最终解输出。通过一批订单数据对多叉树结构的分层迭代式优化方法中的不同参数进行测试与分析，综合考虑原材料利用率、切割效率与算法优化时间后，本章算法中的参数采用Kp＝4，UtilList＝{0.9，0.85，0.8，0.75}，ChildNode＝4进行计算。
+计算实验与分析过程：一种考虑切割效率与利用率的分层迭代式排样优化算法和软件使用Java实现，由Eclipse 3.7编译。所有实验均在主频为3.4G Hz(四核)的Intel i7-6700CPU上执行，8GBRAM的Windows 7旗舰版操作系统。
+为了验证所提排样优化算法的可行性与有效性，对相关文献报道的算法和提供的测试算例进行测试实验。为实现与推动所提算法的产业化应用，开发了相应的软件系统，并对大型板式定制家具企业的实际生产订单数据进行测试与对比。通过实验进行测试与分析，验证本文算法的可行性和有效性，其中下料排版图均满足三阶精确一刀切类型，且切片工件不可旋转，四组实验的数据信息如下。参考文献：[1]王磊.板构产品制造过程中的智能排样优化方法研究[D].广东工业大学,2017.
+[2]Silva E,Alvelos F,Carvalho J M V D.An integer programming modelfor two-and three-stage two-dimensional cutting stock problems[J].EuropeanJournal of Operational Research,2010,205(3):699-708.
+[3]Puchinger J,Raidl G R.Models and algorithms for three-stage two-dimensional bin packing[J].European Journal of Operational Research,2007,183(3):1304-1327.
+[4]Chen Q,Cui Y,Chen Y.Sequential value correction heuristic for thetwo-dimensional cutting stock problem with three-staged homogenous patterns[J].Optimization Methods&Software,2016,31(1):68-87.
+实验一：测试的为国际通用Benchmark测试案例ATP30-49系列数据，有20个案例，总计805块切片，数据来源于2010年文献[2])。
+实验二：测试的为定制家具企业A于2019年5月份部分实际生产订单数据，包含15个优化批次，总计15309块小板。
+A企业使用的市场认可度和占有率较高的某开料优化软件(用M软件表示)，实验二中的测试数据均需要进行大板修边与预留切割锯缝。本章算法中的参数采用Kp＝4，UtilList＝{0.9，0.85，0.8，0.75}，ChildNode＝4，C1＝90，C2＝4.0，C3＝0.5。
+1)实验一计算与分析
+实验一案例选用国际通用Benchmark测试案例ATP30-49系列，案例数据来源于2010年Silva等发表的文献，共计20个算例，同其他文献中的算法计算结果对比，如表1所示。由表中排样对比结果可知，本算法实验结果明显优于文献[3]和文献[2]，较文献[4]结果稍差，其中6个案例测试结果比其均多出一块板材。本文20个案例总耗时12.307秒，优于文献[4]的98.2秒，每个案例平均耗时约0.6秒。较文献[1]的结果本章算法多出一块板材，但总计减少了113个(52.1％)切割版面，切割刀数减少5374(58.7％)；单个版面平均切割刀数为36.3刀，较文献[1]平均每个版面减少5.9刀。如图4所示，给出了测试案例ATP48的排样方案，该排样方案有5个切割版面，使用8块大板，切割177刀，排样时间为0.489秒，其白色部分为废料。
+[![Figure GDA0002643902550000181](https://patentimages.storage.googleapis.com/3d/94/b2/85eca92a912948/GDA0002643902550000181.png)](https://patentimages.storage.googleapis.com/3d/94/b2/85eca92a912948/GDA0002643902550000181.png)
+表1 ATP30-49系列案例详细数据对比
+2)实验二计算与分析
+本测试案例选取家具制造企业A的实际生产订单数据，15个生产批次。排版版面要求满足三阶精确一刀切类型，下料工件不可旋转，且大板板材修边尺寸为60毫米，切割锯缝锯厚度为48毫米。企业A提供了公司目前使用的M软件对这15个批次订单数据的具体优化结果数据(采用相同的工艺参数)，与本章算法的详细测试结果数据对比如表2所示。
+由表2的优化结果对比可知，本章算法在15个批次数据测试中利用率都比M软件的高，且大板数总计减少了82块，平均利用率提高了2.8％，切割次数总计减少了42次，总切割刀数减少了15.3％。本章算法实验结果明显优于M软件的优化结果，能够节省更多的原材料且切割效率更高。
+[![Figure GDA0002643902550000191](https://patentimages.storage.googleapis.com/80/33/47/2701c54d85b93c/GDA0002643902550000191.png)](https://patentimages.storage.googleapis.com/80/33/47/2701c54d85b93c/GDA0002643902550000191.png)
+表2与企业A的数据对比
+以上结合具体实施例描述了本发明的技术原理。这些描述只是为了解释本发明的原理，而不能以任何方式解释为对本发明保护范围的限制。基于此处的解释，本领域的技术人员不需要付出创造性的劳动即可联想到本发明的其它具体实施方式，这些方式都将落入本发明的保护范围之内。## Claims (7)
+1.一种考虑切割效率与利用率的分层迭代式排样优化方法，其特征在于，包括下述步骤：
+建立模型：结合切割效率与利用率建立最小化总成本的多目标优化模型；排版优化：基于叠板数分层的排样递归算法完成排版优化；包括下述步骤：步骤A1：获取未排版的所有板材切片数据Ri，包括板材切片的长宽尺寸li\*wi以及数量di，当di＝0时，则该切片已排完，删除该切片；
+步骤A2：计算所有未排的切片叠K块板切割时，每层每种切片最大可排放的切片数量为
+[![Figure FDA0002643902540000011](https://patentimages.storage.googleapis.com/d5/fa/73/31dea9df37a91d/FDA0002643902540000011.png)](https://patentimages.storage.googleapis.com/d5/fa/73/31dea9df37a91d/FDA0002643902540000011.png)
+步骤A3：获取步骤A2中计算切片叠板K块的单层可排放的切片数量Fi>0的所有待排切片集合Qk；
+步骤A4：对待排切片集合Qk中的切片数据进行排版下料优化，调用单版面排样优化算法获得当前最高利用率的一个版面P，利用率为Up，则下料方式jP是可叠板K块大板进行切割，当K值相同时，相同尺寸的原材料先排放的板材可选择的切片大于后排放的板材，先排放的原材料的利用率大于后排放的原材料，板材的利用率为单调递减；
+当Up>＝Utillimt时，跳到步骤A5；
+当Up<Utillimt，且K＝1时，跳到步骤A5；
+当Up<Utillimt，且K>1时，先执行K＝K-1；更新待排切片数据，再执行步骤1；
+步骤A5：添加版面P排版信息和叠板数K到解集{S}中，再更新切片集合Qk的数量，即减去版面P中的切片数量；
+步骤A6：判断所有切片是否都排完，如果未排完，则跳到步骤A4；如果排完了，则算法结束；
+分层迭代式搜索：基于利用率阈值的多叉树分层迭代式搜索方法进行排版优化并设置阈值；参数分析与优化：对分层迭代式搜索获得的参数进行分析与优化，并得到算法结果；对三个主要参数的优化，包括：多叉树的层数、利用率阈值的大小以及多叉树子节点个数；计算实验与分析：通过实验进行测试与分析，验证算法结果的可行性和有效性。2.根据权利要求1所述的一种考虑切割效率与利用率的分层迭代式排样优化方法，其特征在于，在所述建立模型的步骤中，包括二维矩形板材排样优化问题，已知大矩形原料板材，宽度为W，高度为L，需要下料的小矩形工件有n种类型，每种工件宽度为wi，高度为li，数量为di，i∈[1,n]；以使用大板材料最少为优化目标的模型如下：
+求解目标为：[![Figure FDA0002643902540000021](https://patentimages.storage.googleapis.com/78/a5/2c/ee659892e25720/FDA0002643902540000021.png)](https://patentimages.storage.googleapis.com/78/a5/2c/ee659892e25720/FDA0002643902540000021.png)
+约束条件为：[![Figure FDA0002643902540000022](https://patentimages.storage.googleapis.com/76/ba/cc/cb4264f2cbbd87/FDA0002643902540000022.png)](https://patentimages.storage.googleapis.com/76/ba/cc/cb4264f2cbbd87/FDA0002643902540000022.png)
+其中j(j＝1,2,…,g)为满足一刀切工艺约束的所有可行排版方案；g为可行的排样方式集P＝[p1,p2,…,pg]中含有的排样方式；xj为第j种排样方式的使用次数；aij(i＝1,2,L,n)为第j种排样方式中包含第i种毛坯数量。
+3.根据权利要求2所述的一种考虑切割效率与利用率的分层迭代式排样优化方法，其特征在于，在所述建立模型的步骤中，包括板材切割成本最小化问题，以切割成本最小化为优化目标的模型如下：
+求解目标为：[![Figure FDA0002643902540000031](https://patentimages.storage.googleapis.com/d7/96/85/4ec2bbf4812c94/FDA0002643902540000031.png)](https://patentimages.storage.googleapis.com/d7/96/85/4ec2bbf4812c94/FDA0002643902540000031.png)
+其中j(j＝1,2,…,g)为满足一刀切工艺约束的所有可行排版方案；g为可行的排样方式集P＝[p1,p2,…,pg]中含有的排样方式；xj为第j种排样方式的使用次数；dp为切割机切割某种材质板材时允许的最大叠层数；C2为每次切换切割版面会增加的切割成本；C3为每刀切割成本；CutNj为切割下料方式jP的版面需要的切割总刀数，包括切割工件以及修边时所有横切与纵切的刀数之和。
+4.根据权利要求3所述的一种考虑切割效率与利用率的分层迭代式排样优化方法，其特征在于，在所述建立模型的步骤中，包括评估下料与切割协同优化方案，评估的优化目标，即最小化总成本为：
+[![Figure FDA0002643902540000032](https://patentimages.storage.googleapis.com/cb/a0/48/bbc9460abc73d0/FDA0002643902540000032.png)](https://patentimages.storage.googleapis.com/cb/a0/48/bbc9460abc73d0/FDA0002643902540000032.png)
+其中j(j＝1,2,…,g)为满足一刀切工艺约束的所有可行排版方案；g为可行的排样方式集P＝[p1,p2,…,pg]中含有的排样方式；xj为第j种排样方式的使用次数；dp为切割机切割某种材质板材时允许的最大叠层数；C1为每块大板原料的成本；C2为每次切换切割版面会增加的切割成本；C3为每刀切割成本；CutNj为切割下料方式jp的版面需要的切割总刀数，包括切割工件以及修边时所有横切与纵切的刀数之和。
+5.根据权利要求1所述的一种考虑切割效率与利用率的分层迭代式排样优化方法，其特征在于，在所述分层迭代式搜索步骤中，设置阈值具体为：在每一层递归调用的过程中设置多个利用率阈值UtilList{u1,u2,u3,…}，每个阈值作为一个新子节点，再递归调用下一层数据。
+6.根据权利要求5所述的一种考虑切割效率与利用率的分层迭代式排样优化方法，其特征在于，在所述多叉树分层迭代式搜索方法中，每个节点主要执行以下三个步骤：
+步骤B1：获取当前所有待排切片的数据；
+步骤B2：依据待排切片数据调用单版面排样优化算法，按利用率由高到低依次优化并获取叠板数为K的所有版面；
+步骤B3：对叠板数为K的所有版面按利用率排序，并按利用率阈值集合UtilList中的多个利用率阈值，将满足条件的版面分成多组，每一组更新其待排切片数据，作为子节点数据的输入，以此递归，完成所有切片排放。
+7.根据权利要求1所述的一种考虑切割效率与利用率的分层迭代式排样优化方法，其特征在于，在参数分析与优化步骤中，具体为：
+多叉树的层数，即最大叠板数Kp为3-8，Kp为大于0的整数；
+利用率阈值的大小范围为70％-95％，按等差数列形式设置多个利用率阈值区间：{0.8}、{0.9，0.8}、{0.9，0.8，0.7}、{0.9，0.85，0.8，0.75}、{0.9，0.85，0.8，0.75，0.7}；
+多叉树子节点个数，即利用率阈值个数ChildNode，利用率阈值个数ChildNode与Kp决定整个该多叉树结构的分层迭代式搜索有ChildNode(Kp-1)个可行的排样方案，并输出最好的解作为最终解输出。
+CN202010106631.7A2020-02-212020-02-21一种考虑切割效率与利用率的分层迭代式排样优化方法Active[CN111311004B(zh)](https://patents.google.com/patent/CN111311004B/zh)
+## Priority Applications (1)
+|Application Number|Priority Date|Filing Date|Title|
+CN202010106631.7A[CN111311004B(zh)](https://patents.google.com/patent/CN111311004B/zh)|2020-02-21|2020-02-21|一种考虑切割效率与利用率的分层迭代式排样优化方法|
+## Applications Claiming Priority (1)
+|Application Number|Priority Date|Filing Date|Title|
+CN202010106631.7A[CN111311004B(zh)](https://patents.google.com/patent/CN111311004B/zh)|2020-02-21|2020-02-21|一种考虑切割效率与利用率的分层迭代式排样优化方法|
+## Publications (2)
+|Publication Number|Publication Date|
+CN111311004A[CN111311004A
+(zh)](https://patents.google.com/patent/CN111311004A/zh)|2020-06-19|
+CN111311004Btrue[CN111311004B
+(zh)](https://patents.google.com/patent/CN111311004B/zh)|2020-10-09|
+# Family
+## ID=71161941
+## Family Applications (1)
+|Application Number|Title|Priority Date|Filing Date|
+CN202010106631.7AActive[CN111311004B(zh)](https://patents.google.com/patent/CN111311004B/zh)|2020-02-21|2020-02-21|一种考虑切割效率与利用率的分层迭代式排样优化方法|
+## Country Status (1)
+|Country|Link|
+CN(1)|[CN111311004B(zh)](https://patents.google.com/patent/CN111311004B/zh)|
+## Families Citing this family (11)
+\* Cited by examiner, †Cited by third party|Publication number|Priority date|Publication date|Assignee|Title|
+[CN113052376B(zh)](https://patents.google.com/patent/CN113052376B/zh)\*|2021-03-19|2024-06-04|杭州晨龙智能科技有限公司|生产排程方法及装置，存储介质和电子设备|
+[CN113222212B(zh)](https://patents.google.com/patent/CN113222212B/zh)\*|2021-04-07|2023-04-07|杭州玖欣物联科技有限公司|一种提升玻璃切割利用率的方法|
+[CN114492050B(zh)](https://patents.google.com/patent/CN114492050B/zh)\*|2022-01-28|2024-10-29|武汉铁路职业技术学院|基于双成本评价法的矩形件优化下料方法|
+[CN114407205B(zh)](https://patents.google.com/patent/CN114407205B/zh)\*|2022-02-15|2023-05-12|广东石块链科技发展有限公司|一种用于玻璃切割机石料加工的排版方法及其算法|
+[CN114548556A(zh)](https://patents.google.com/patent/CN114548556A/zh)\*|2022-02-22|2022-05-27|北京百度网讯科技有限公司|毛坯处理方法、装置、电子设备以及存储介质|
+[CN114985295B(zh)](https://patents.google.com/patent/CN114985295B/zh)\*|2022-06-20|2023-12-29|福建威而特旋压科技有限公司|一种基于冲压落料料宽的钢材自动筛选方法|
+[CN115829082A(zh)](https://patents.google.com/patent/CN115829082A/zh)\*|2022-10-24|2023-03-21|用友网络科技股份有限公司|切割方案的确定方法、装置、电子设备和存储介质|
+[CN116786902A(zh)](https://patents.google.com/patent/CN116786902A/zh)\*|2023-02-20|2023-09-22|浙江省建工集团有限责任公司|一种建筑钢构件排版优化方法及系统|
+[CN116882555B(zh)](https://patents.google.com/patent/CN116882555B/zh)\*|2023-06-26|2024-03-12|广东工业大学|一种分拣工位受限的多订单排样优化方法|
+[CN117172473A(zh)](https://patents.google.com/patent/CN117172473A/zh)\*|2023-09-04|2023-12-05|晞德求索(北京)科技有限公司|基于动态分配的一维下料方法和装置|
+[CN119721317B(zh)](https://patents.google.com/patent/CN119721317B/zh)\*|2024-10-23|2025-08-05|广东工业大学|一种考虑斜切的管型材切割优化方法|
+## Citations (4)
+\* Cited by examiner, †Cited by third party|Publication number|Priority date|Publication date|Assignee|Title|
+[CN103114429A(zh)](https://patents.google.com/patent/CN103114429A/zh)\*|2011-11-16|2013-05-22|东莞市点亮软件有限公司|一种皮料、布料排版方法及排版系统|
+[CN104820867A(zh)](https://patents.google.com/patent/CN104820867A/zh)\*|2015-04-20|2015-08-05|广东工业大学|一种面向多规格板材的矩形件排样方法|
+[CN109118002A(zh)](https://patents.google.com/patent/CN109118002A/zh)\*|2018-08-09|2019-01-01|广东工业大学|一种板式产品切割下料与分箱分架集成优化方法|
+[CN110555563A(zh)](https://patents.google.com/patent/CN110555563A/zh)\*|2019-09-05|2019-12-10|湖北文理学院|大规模钢筋分组及下料优化方法及装置|
+## Family Cites Families (2)
+\* Cited by examiner, †Cited by third party|Publication number|Priority date|Publication date|Assignee|Title|
+[CN103164752B(zh)](https://patents.google.com/patent/CN103164752B/zh)\*|2013-04-03|2016-04-20|中国计量学院|一种基于分层随机搜索算法的启发式一维下料方法|
+[CN109062445A(zh)](https://patents.google.com/patent/CN109062445A/zh)\*|2018-09-06|2018-12-21|牧东光电科技有限公司|一种采用异形切割制备触摸屏的方法|
+* 2020
+* 2020-02-21CNCN202010106631.7A[patent/CN111311004B/zh](https://patents.google.com/patent/CN111311004B/zh)activeActive
+## Patent Citations (4)
+\* Cited by examiner, †Cited by third party|Publication number|Priority date|Publication date|Assignee|Title|
+[CN103114429A(zh)](https://patents.google.com/patent/CN103114429A/zh)\*|2011-11-16|2013-05-22|东莞市点亮软件有限公司|一种皮料、布料排版方法及排版系统|
+[CN104820867A(zh)](https://patents.google.com/patent/CN104820867A/zh)\*|2015-04-20|2015-08-05|广东工业大学|一种面向多规格板材的矩形件排样方法|
+[CN109118002A(zh)](https://patents.google.com/patent/CN109118002A/zh)\*|2018-08-09|2019-01-01|广东工业大学|一种板式产品切割下料与分箱分架集成优化方法|
+[CN110555563A(zh)](https://patents.google.com/patent/CN110555563A/zh)\*|2019-09-05|2019-12-10|湖北文理学院|大规模钢筋分组及下料优化方法及装置|
+## Also Published As
+|Publication number|Publication date|
+[CN111311004A(zh)](https://patents.google.com/patent/CN111311004A/zh)|2020-06-19|
+## Similar Documents
+|Publication|Publication Date|Title|
+[CN111311004B(zh)](https://patents.google.com/patent/CN111311004B/zh)|2020-10-09|一种考虑切割效率与利用率的分层迭代式排样优化方法|
+[CN106055747B(zh)](https://patents.google.com/patent/CN106055747B/zh)|2017-04-12|一种面向单规格板材的矩形工件快速排样方法|
+[Liu et al.](https://patents.google.com/scholar/3464579956643803585)|2017|A hybrid fruit fly algorithm for solving flexible job-shop scheduling to reduce manufacturing carbon footprint|
+[Hinxman](https://patents.google.com/scholar/7866675540920193259)|1980|The trim-loss and assortment problems: A survey|
+[CN111290283B(zh)](https://patents.google.com/patent/CN111290283B/zh)|2021-07-27|一种面向选择性激光熔融工艺的增材制造单机调度方法|
+[Xiao et al.](https://patents.google.com/scholar/275557604713614538)|2024|An improved MOEA/D for multi-objective flexible job shop scheduling by considering efficiency and cost|
+[CN107818381A(zh)](https://patents.google.com/patent/CN107818381A/zh)|2018-03-20|铝材加工切割方法|
+[Diyaley et al.](https://patents.google.com/scholar/3230336824580012537)|2022|Metaheuristics-based nesting of parts in sheet metal cutting operation|
+[CN116561996A(zh)](https://patents.google.com/patent/CN116561996A/zh)|2023-08-08|一种基于电子开料锯开料优化的矩形件排样方法|
+[CN110134064A(zh)](https://patents.google.com/patent/CN110134064A/zh)|2019-08-16|加工路径优化方法及装置|
+[CN114492959A(zh)](https://patents.google.com/patent/CN114492959A/zh)|2022-05-13|一种基于遗传算法的板式家具生产调度批次优化的方法|
+[Rahman et al.](https://patents.google.com/scholar/12944834284769400778)|2018|Simulating cutting line of a furniture industry|
+[Zhang et al.](https://patents.google.com/scholar/5230256039385947558)|2025|Column Generation Algorithms forTwo-dimensional Cutting Problem With SurfaceDefects|
+[Permatasari et al.](https://patents.google.com/scholar/7051174316218267187)|2020|Re-layout facility to minimize defects and production cost in PT. Sendanis Jaya Makmur|
+[Rezaeipanah et al.](https://patents.google.com/scholar/4433043619024871630)|2021|Meta-heuristic approach based on genetic and greedy algorithms to solve flexible job-shop scheduling problem|
+[Ljubenkov et al.](https://patents.google.com/scholar/16032537033432278208)|2008|Simulation methods in shipbuilding process design|
+[Roy et al.](https://patents.google.com/scholar/150967607935400238)|2002|Generalised regression GA for handling inseparable function interaction: Algorithm and applications|
+[Dewi](https://patents.google.com/scholar/12819185738912750098)|2019|Optimization of flow shop scheduling problem using tabu search algorithm: A case study|
+[Rathke et al.](https://patents.google.com/scholar/12232432682457977729)|2013|The box assignment problem in log yards|
+[CN119151084B(zh)](https://patents.google.com/patent/CN119151084B/zh)|2025-02-14|一种用于板材加工的调度方法|
+[Savsar et al.](https://patents.google.com/scholar/12806105927716125327)|2023|An Optimization Model to Minimize Cutting Waste in Medical Container Manufacturing|
+[Tieng et al.](https://patents.google.com/scholar/15605957184637065613)|2016|Heuristics for two-dimensional rectangular guillotine cutting stock|
+[Durak et al.](https://patents.google.com/scholar/18420790605181529400)|2021|Bun splitting: an online cutting problem with defects from the food industry|
+[Lindner et al.](https://patents.google.com/scholar/87186203821901252)|2013|A model to optimise the linked sawing and ripping decisions in the South African pine wood industry|
+[CN120611425A(zh)](https://patents.google.com/patent/CN120611425A/zh)|2025-09-09|一种面向板式家具的三阶段混合启发式下料方法|
+## Legal Events
+|Date|Code|Title|Description|
+2020-06-19|PB01|Publication||
+2020-06-19|PB01|Publication||
+2020-07-14|SE01|Entry into force of request for substantive examination||
+2020-07-14|SE01|Entry into force of request for substantive examination||
+2020-10-09|GR01|Patent grant||
+2020-10-09|GR01|Patent grant||

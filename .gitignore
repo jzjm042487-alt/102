@@ -1,0 +1,43 @@
+# ───── 依赖 / 虚拟环境 ─────
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# ───── 构建产物 ─────
+.next/
+dist/
+build/
+.wrangler/
+*.tsbuildinfo
+
+# ───── 运行时数据 / 大文件（勿入库，含业务数据）─────
+data/
+backend/data/
+*.log
+*.jsonl
+DGMOMPTDGMOMGLLXWTFJB.json
+
+# ───── 本地备份（不入库）─────
+_backup/
+*.bak
+*.old
+
+# ───── 临时 / 调试文件 ─────
+scripts/_tmp_*.py
+_tmp_*
+*.tmp
+
+# ───── IDE / 系统 ─────
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# ───── 密钥 / 环境（严禁入库）─────
+.env
+.env.*
+*.key
+*.pem

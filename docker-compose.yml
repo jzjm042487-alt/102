@@ -1,0 +1,23 @@
+services:
+  nesting:
+    build: .
+    ports:
+      - "8000:8000"
+    environment:
+      NESTING_TIME_LIMIT_SECONDS: "120"
+      NESTING_MAX_WORKERS: "2"
+      # Comma-separated allowed origins; narrow to the real frontend host in
+      # production. "*" allows any origin.
+      NESTING_CORS_ALLOW_ORIGINS: "*"
+    volumes:
+      - nesting-data:/app/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/api/v1/health', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
+
+volumes:
+  nesting-data:

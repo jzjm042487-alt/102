@@ -1,0 +1,52 @@
+{
+  "OriginalProblem": {
+    "NestParam": {"BladeMargin": "10"},
+    "material": "LEGACY-M",
+    "specifications": "Φ57×5",
+    "Min_Welding_Length": "500",
+    "Pipe": [
+      {
+        "figure_number": "OLD-P1",
+        "Parent_node": "OLD-P1",
+        "jlxh": "11",
+        "cube_no": "3",
+        "pipe_length": "1000.00",
+        "pipe_demand": "1",
+        "Max_Weldingjoint_Number": "2000",
+        "Unweldable_Area": [["0", "100"], ["900", "1000"]]
+      }
+    ],
+    "Stock": [
+      {"stock_length": "1010", "stock_demand": "1", "must_use": "0"}
+    ]
+  },
+  "GeneralInfo": {
+    "UtilRate": "0.99009900990099",
+    "WeldingJointQuantity": "1",
+    "PipeLength_Of_SingleMaterialSpecification": "1000",
+    "StockLength_Of_SingleMaterialSpecification": "1010"
+  },
+  "Result": {
+    "WeldingPattern": {
+      "WeldingPipe": [
+        {
+          "FigureNumber": "OLD-P1",
+          "InPipeNumber": "3",
+          "jlxh": "11",
+          "Pattern": [{"Part": "400 600 ", "Number": "1"}]
+        }
+      ]
+    },
+    "CuttingPattern": {
+      "CuttingPipe": [
+        {
+          "Length": "1010",
+          "Part": "400 600 ",
+          "TrimLoss": "10",
+          "Number": "1"
+        }
+      ]
+    },
+    "UnusedMaterials": []
+  }
+}

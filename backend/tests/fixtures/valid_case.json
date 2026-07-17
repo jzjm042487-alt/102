@@ -1,0 +1,130 @@
+{
+  "problem": {
+    "input": {
+      "Min_Welding_Length": "500",
+      "Min_Reusable_Remnant_Length": "100",
+      "NestParam": {"BladeMargin": "10"},
+      "data": [
+        {
+          "material": "TEST-MATERIAL",
+          "specifications": "Φ45×12",
+          "Target_Util_Rate": "95",
+          "Pipe": [
+            {
+              "figure_number": "P1",
+              "Parent_node": "P1",
+              "jlxh": 1,
+              "cube_no": 2,
+              "pipe_length": "1000",
+              "pipe_demand": 2,
+              "Max_Weldingjoint_Number": 2,
+              "Unweldable_Area": [[0, 100], [900, 1000]]
+            },
+            {
+              "figure_number": "P2",
+              "Parent_node": "P2",
+              "jlxh": 2,
+              "cube_no": 3,
+              "pipe_length": "1200",
+              "pipe_demand": 1,
+              "Max_Weldingjoint_Number": 3,
+              "Unweldable_Area": [[0, 100], [1100, 1200]]
+            }
+          ],
+          "Stock": [
+            {"stock_length": 1010, "stock_demand": 2, "must_use": 0},
+            {"stock_length": 1300, "stock_demand": 1, "must_use": 0},
+            {"stock_length": 1500, "stock_demand": 1, "must_use": 0}
+          ]
+        }
+      ]
+    }
+  },
+  "solution": {
+    "status": "target_reached",
+    "groups": [
+      {
+        "material": "TEST-MATERIAL",
+        "specifications": "Φ45×12",
+        "input_normalizations": [],
+        "welding_patterns": [
+          {
+            "pipe_id": "P1|1|2",
+            "figure_number": "P1",
+            "jlxh": 1,
+            "cube_no": 2,
+            "pipe_length": 1000,
+            "parts": [400, 600],
+            "weld_positions": [400],
+            "quantity": 2,
+            "joint_count": 1
+          },
+          {
+            "pipe_id": "P2|2|3",
+            "figure_number": "P2",
+            "jlxh": 2,
+            "cube_no": 3,
+            "pipe_length": 1200,
+            "parts": [300, 500, 400],
+            "weld_positions": [300, 800],
+            "quantity": 1,
+            "joint_count": 2
+          }
+        ],
+        "cutting_patterns": [
+          {
+            "stock_length": 1010,
+            "parts": [400, 600],
+            "quantity": 2,
+            "kerf_per_cut": 10,
+            "kerf_loss_per_stock": 10,
+            "remainder_per_stock": 0,
+            "used_length_per_stock": 1010
+          },
+          {
+            "stock_length": 1300,
+            "parts": [300, 500, 400],
+            "quantity": 1,
+            "kerf_per_cut": 10,
+            "kerf_loss_per_stock": 20,
+            "remainder_per_stock": 80,
+            "used_length_per_stock": 1220
+          }
+        ],
+        "unused_materials": [{"stock_length": 1500, "quantity": 1}],
+        "generated_remnants": [
+          {
+            "length": 80,
+            "quantity": 1,
+            "source_stock_length": 1300,
+            "reusable": false
+          }
+        ],
+        "metrics": {
+          "demand_length": 3200,
+          "used_stock_length": 3320,
+          "utilization_rate": 0.963855421686747,
+          "welding_joint_quantity": 4,
+          "welding_pattern_type_quantity": 2,
+          "cutting_pattern_type_quantity": 2,
+          "kerf_loss": 40,
+          "remainder_length": 80,
+          "target_utilization_rate": 0.95,
+          "target_reached": true
+        }
+      }
+    ],
+    "summary": {
+      "demand_length": 3200,
+      "used_stock_length": 3320,
+      "utilization_rate": 0.963855421686747,
+      "welding_joint_quantity": 4,
+      "welding_pattern_type_quantity": 2,
+      "cutting_pattern_type_quantity": 2,
+      "kerf_loss": 40,
+      "remainder_length": 80,
+      "normalized_length_field_quantity": 0,
+      "target_reached": true
+    }
+  }
+}

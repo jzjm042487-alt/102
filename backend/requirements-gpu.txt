@@ -1,0 +1,11 @@
+# Optional GPU acceleration for the candidate-generation pre-solver.
+#
+# Install ONLY on hosts with an NVIDIA CUDA GPU + matching driver, then set
+#   NESTING_ACCEL=auto   (use GPU when present)  or  NESTING_ACCEL=gpu (force).
+# Without this file the engine runs pure CPU (SCIP), unchanged.
+#
+# Pick the wheel matching your installed CUDA toolkit major version:
+#   CUDA 12.x -> cupy-cuda12x
+#   CUDA 11.x -> cupy-cuda11x
+# See https://docs.cupy.dev/en/stable/install.html
+cupy-cuda12x>=13.0.0

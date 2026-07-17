@@ -1,0 +1,142 @@
+[
+ {
+  "id": "1e71bfd5-945d-4cc5-8f95-780fdf2955f6",
+  "diff": 1347.1,
+  "npipes": 18,
+  "nstock": 21,
+  "nbars": 3643,
+  "nfb": 521,
+  "demand": 1584,
+  "legacy": {
+   "util": 0.9991,
+   "cut": 50,
+   "weld": 19
+  }
+ },
+ {
+  "id": "76c9641e-d5ef-4c9c-bf36-cf4670d5a176",
+  "diff": 1030.9,
+  "npipes": 18,
+  "nstock": 16,
+  "nbars": 2536,
+  "nfb": 380,
+  "demand": 1644,
+  "legacy": {
+   "util": 0.99838,
+   "cut": 41,
+   "weld": 21
+  }
+ },
+ {
+  "id": "f0212985-1d32-4b63-b1c7-0e4d64c65517",
+  "diff": 1030.6,
+  "npipes": 18,
+  "nstock": 16,
+  "nbars": 2520,
+  "nfb": 380,
+  "demand": 1644,
+  "legacy": {
+   "util": 0.99809,
+   "cut": 42,
+   "weld": 21
+  }
+ },
+ {
+  "id": "7f9bcfdb-27c8-4fd2-be0d-34b4cd7811c2",
+  "diff": 995.6,
+  "npipes": 18,
+  "nstock": 9,
+  "nbars": 2520,
+  "nfb": 373,
+  "demand": 1644,
+  "legacy": {
+   "util": 0.99694,
+   "cut": 35,
+   "weld": 18
+  }
+ },
+ {
+  "id": "8ffa3d15-38c1-46a7-bcd0-3fbc5ca30fde",
+  "diff": 985.9,
+  "npipes": 18,
+  "nstock": 1,
+  "nbars": 2536,
+  "nfb": 380,
+  "demand": 1644,
+  "legacy": {
+   "util": 0.97475,
+   "cut": 19,
+   "weld": 18
+  }
+ },
+ {
+  "id": "30ec34c6-c182-454b-80c4-34e8b260d28a",
+  "diff": 976.3,
+  "npipes": 12,
+  "nstock": 17,
+  "nbars": 3903,
+  "nfb": 354,
+  "demand": 1584,
+  "legacy": {
+   "util": 0.99645,
+   "cut": 39,
+   "weld": 14
+  }
+ },
+ {
+  "id": "f52bcb05-439d-4633-b690-a643b845be33",
+  "diff": 976.3,
+  "npipes": 12,
+  "nstock": 17,
+  "nbars": 3903,
+  "nfb": 354,
+  "demand": 1584,
+  "legacy": {
+   "util": 0.99645,
+   "cut": 39,
+   "weld": 14
+  }
+ },
+ {
+  "id": "21d181ee-a133-400a-8750-d9db4841398f",
+  "diff": 972.3,
+  "npipes": 12,
+  "nstock": 17,
+  "nbars": 3903,
+  "nfb": 352,
+  "demand": 1584,
+  "legacy": {
+   "util": 0.99645,
+   "cut": 39,
+   "weld": 14
+  }
+ },
+ {
+  "id": "02952e87-9bfb-4548-b5df-c7ed58f2516a",
+  "diff": 972.3,
+  "npipes": 12,
+  "nstock": 17,
+  "nbars": 3903,
+  "nfb": 352,
+  "demand": 1584,
+  "legacy": {
+   "util": 0.99633,
+   "cut": 38,
+   "weld": 14
+  }
+ },
+ {
+  "id": "1ad945b4-980f-4817-8411-0df9bfc78c9b",
+  "diff": 917.1,
+  "npipes": 12,
+  "nstock": 9,
+  "nbars": 1395,
+  "nfb": 392,
+  "demand": 364,
+  "legacy": {
+   "util": 0.99874,
+   "cut": 27,
+   "weld": 12
+  }
+ }
+]

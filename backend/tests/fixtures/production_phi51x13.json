@@ -1,0 +1,38 @@
+{
+  "input": {
+    "Min_Welding_Length": "500",
+    "NestParam": {"BladeMargin": "10"},
+    "data": [
+      {
+        "material": "SA-213TP310HCbN",
+        "specifications": "PHI51x13",
+        "Target_Util_Rate": "99.25",
+        "Pipe": [
+          {
+            "figure_number": "197N215-1-25",
+            "Parent_node": "197N215-1-25",
+            "jlxh": 108,
+            "cube_no": 3,
+            "Com_draw_number": "197N215MX",
+            "Scr_draw_number": "197N215-1-0",
+            "pipe_length": "17310.2",
+            "pipe_demand": 26,
+            "Max_Weldingjoint_Number": "2000",
+            "Unweldable_Area": [
+              [0, 100],
+              [1686, 2190],
+              [3098, 3801],
+              [4714, 5218],
+              [17208, 17308]
+            ]
+          }
+        ],
+        "Stock": [
+          {"stock_length": "4650", "stock_demand": "5", "must_use": "0"},
+          {"stock_length": "9500", "stock_demand": "2", "must_use": "0"},
+          {"stock_length": "10000", "stock_demand": "43", "must_use": "0"}
+        ]
+      }
+    ]
+  }
+}

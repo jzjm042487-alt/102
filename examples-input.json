@@ -1,0 +1,43 @@
+{
+  "input": {
+    "Min_Welding_Length": "500",
+    "Min_Reusable_Remnant_Length": "100",
+    "NestParam": {
+      "BladeMargin": "10"
+    },
+    "data": [
+      {
+        "material": "TEST-MATERIAL",
+        "specifications": "Φ45×12",
+        "Target_Util_Rate": "95",
+        "Pipe": [
+          {
+            "figure_number": "P1",
+            "Parent_node": "P1",
+            "jlxh": 1,
+            "cube_no": 2,
+            "pipe_length": "1000",
+            "pipe_demand": 2,
+            "Max_Weldingjoint_Number": 2,
+            "Unweldable_Area": [[0, 100], [900, 1000]]
+          },
+          {
+            "figure_number": "P2",
+            "Parent_node": "P2",
+            "jlxh": 2,
+            "cube_no": 3,
+            "pipe_length": "1200",
+            "pipe_demand": 1,
+            "Max_Weldingjoint_Number": 3,
+            "Unweldable_Area": [[0, 100], [1100, 1200]]
+          }
+        ],
+        "Stock": [
+          {"stock_length": 1010, "stock_demand": 2, "must_use": 0},
+          {"stock_length": 1300, "stock_demand": 1, "must_use": 0},
+          {"stock_length": 1500, "stock_demand": 1, "must_use": 0}
+        ]
+      }
+    ]
+  }
+}
