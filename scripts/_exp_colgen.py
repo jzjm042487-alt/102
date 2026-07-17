@@ -1182,7 +1182,8 @@ def legacy_alpha_and_metrics(sample):
     ct = len({(int(float(c.get("Length"))), tuple(sorted(parts(c.get("Part", ""))))) for c in cp})
     # 拼法种类按 parts 物理去重（同一切分被多图号复用不重复计），对齐合并管型口径
     wt = len({tuple(parts(p.get("Part", "")))
-              for w in wp for p in w.get("Pattern", [])})
+              for w in wp for p in w.get("Pattern", [])
+              if len(parts(p.get("Part", ""))) >= 2})
     total_joints = 0
     for w in wp:
         for pat in w.get("Pattern", []):

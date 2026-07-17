@@ -233,7 +233,7 @@ def evaluate(group, segs, target_len, slack, time_limit, exact=True, indiv=None)
     return {
         "seg_types": len(used_segs), "segs": sorted(used_segs),
         "cut_types": len({(cuts[ci][0], tuple(sorted(cuts[ci][1].items()))) for ci in used_cut}),
-        "weld_types": len({pipe_pats[i][j] for (i, j) in used_weld}),
+        "weld_types": len({pipe_pats[i][j] for (i, j) in used_weld if len(pipe_pats[i][j]) >= 2}),
         "joints": total_joints,
         "used_len": used_len, "util": group.demand_length / used_len,
     }
