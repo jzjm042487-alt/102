@@ -1183,7 +1183,15 @@ def legacy_alpha_and_metrics(sample):
     # 拼法种类按 parts 物理去重（同一切分被多图号复用不重复计），对齐合并管型口径
     wt = len({tuple(parts(p.get("Part", "")))
               for w in wp for p in w.get("Pattern", [])})
-    return sorted(seg), {"util": float(gi.get("UtilRate", 0)), "cut_types": ct, "weld_types": wt}
+    total_joints = 0
+    for w in wp:
+        for pat in w.get("Pattern", []):
+            nseg = len(parts(pat.get("Part", "")))
+            num = int(float(pat.get("Number", 1) or 1))
+            if nseg >= 1:
+                total_joints += (nseg - 1) * num
+    joints = total_joints if wp else None
+    return sorted(seg), {"util": float(gi.get("UtilRate", 0)), "cut_types": ct, "weld_types": wt, "joints": joints}
 
 
 def main():
