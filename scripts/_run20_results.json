@@ -1,0 +1,348 @@
+[
+  {
+    "level": 1,
+    "spec": "SA-213S30432/45x12",
+    "elapsed": 1.0,
+    "target_rate": 0.9925,
+    "legacy": {
+      "joints": null,
+      "cut_types": 0,
+      "weld_types": 0,
+      "util": 0.0
+    },
+    "ours": null,
+    "verdict": "FAIL"
+  },
+  {
+    "level": 2,
+    "spec": "12Cr1MoVG/51x7.5",
+    "elapsed": 0.6,
+    "target_rate": 0.9925,
+    "legacy": {
+      "joints": 0,
+      "cut_types": 1,
+      "weld_types": 1,
+      "util": 0.95
+    },
+    "ours": {
+      "joints": 0,
+      "cut_types": 1,
+      "weld_types": 0,
+      "seg_types": 1,
+      "util": 0.95
+    },
+    "verdict": "WIN"
+  },
+  {
+    "level": 3,
+    "spec": "SA-213M T92/57x6.5",
+    "elapsed": 0.7,
+    "target_rate": 0.9925,
+    "legacy": {
+      "joints": 0,
+      "cut_types": 1,
+      "weld_types": 0,
+      "util": 0.9955
+    },
+    "ours": {
+      "joints": 0,
+      "cut_types": 1,
+      "weld_types": 0,
+      "seg_types": 1,
+      "util": 0.9955
+    },
+    "verdict": "OK"
+  },
+  {
+    "level": 4,
+    "spec": "SA-213T92/45x11",
+    "elapsed": 0.7,
+    "target_rate": 0.9925,
+    "legacy": {
+      "joints": 0,
+      "cut_types": 4,
+      "weld_types": 0,
+      "util": 0.9661
+    },
+    "ours": {
+      "joints": 0,
+      "cut_types": 4,
+      "weld_types": 0,
+      "seg_types": 1,
+      "util": 0.9661
+    },
+    "verdict": "OK"
+  },
+  {
+    "level": 5,
+    "spec": "SA-213T91Type1/45x8.5",
+    "elapsed": 0.6,
+    "target_rate": 0.9925,
+    "legacy": {
+      "joints": 0,
+      "cut_types": 2,
+      "weld_types": 1,
+      "util": 0.9647
+    },
+    "ours": {
+      "joints": 0,
+      "cut_types": 1,
+      "weld_types": 0,
+      "seg_types": 1,
+      "util": 0.9326
+    },
+    "verdict": "LOSE_U"
+  },
+  {
+    "level": 6,
+    "spec": "SA-213TP310HCbN/51x9",
+    "elapsed": 0.9,
+    "target_rate": 0.9925,
+    "legacy": {
+      "joints": 0,
+      "cut_types": 1,
+      "weld_types": 0,
+      "util": 0.997
+    },
+    "ours": {
+      "joints": 0,
+      "cut_types": 1,
+      "weld_types": 0,
+      "seg_types": 1,
+      "util": 0.997
+    },
+    "verdict": "OK"
+  },
+  {
+    "level": 7,
+    "spec": "SA-213TP310HCbN/51x13",
+    "elapsed": 0.6,
+    "target_rate": 0.9925,
+    "legacy": {
+      "joints": 39,
+      "cut_types": 5,
+      "weld_types": 2,
+      "util": 0.9914
+    },
+    "ours": {
+      "joints": 38,
+      "cut_types": 1,
+      "weld_types": 1,
+      "seg_types": 2,
+      "util": 0.7435
+    },
+    "verdict": "LOSE_U"
+  },
+  {
+    "level": 8,
+    "spec": "SA-213TP310HCbN/45x9",
+    "elapsed": 2.0,
+    "target_rate": 0.9925,
+    "legacy": {
+      "joints": 64,
+      "cut_types": 8,
+      "weld_types": 5,
+      "util": 0.9965
+    },
+    "ours": {
+      "joints": 228,
+      "cut_types": 6,
+      "weld_types": 1,
+      "seg_types": 4,
+      "util": 0.9965
+    },
+    "verdict": "LOSE_J"
+  },
+  {
+    "level": 9,
+    "spec": "SA-213M S30432/57x6",
+    "elapsed": 2.4,
+    "target_rate": 0.9925,
+    "legacy": {
+      "joints": 21,
+      "cut_types": 8,
+      "weld_types": 5,
+      "util": 0.9878
+    },
+    "ours": {
+      "joints": 90,
+      "cut_types": 4,
+      "weld_types": 2,
+      "seg_types": 4,
+      "util": 0.9878
+    },
+    "verdict": "LOSE_J"
+  },
+  {
+    "level": 10,
+    "spec": "SA-213TP310HCbN/51x13",
+    "elapsed": 0.6,
+    "target_rate": 0.9925,
+    "legacy": {
+      "joints": 38,
+      "cut_types": 8,
+      "weld_types": 5,
+      "util": 0.9953
+    },
+    "ours": {
+      "joints": 38,
+      "cut_types": 1,
+      "weld_types": 1,
+      "seg_types": 2,
+      "util": 0.7435
+    },
+    "verdict": "LOSE_U"
+  },
+  {
+    "ours": null,
+    "legacy": {
+      "joints": 115,
+      "cut_types": 5,
+      "weld_types": 2,
+      "util": 0.9945
+    },
+    "elapsed": 100,
+    "_timeout": true,
+    "level": 11,
+    "spec": "SA-213TP310HCbN/57x4",
+    "verdict": "TIMEOUT"
+  },
+  {
+    "ours": null,
+    "legacy": {
+      "joints": 115,
+      "cut_types": 5,
+      "weld_types": 4,
+      "util": 0.9928
+    },
+    "elapsed": 100,
+    "_timeout": true,
+    "level": 12,
+    "spec": "SA-213TP310HCbN/57x6.5",
+    "verdict": "TIMEOUT"
+  },
+  {
+    "level": 13,
+    "spec": "SA-213TP310HCbN/45x12",
+    "elapsed": 80.5,
+    "target_rate": 0.9925,
+    "legacy": {
+      "joints": 68,
+      "cut_types": 6,
+      "weld_types": 4,
+      "util": 0.9943
+    },
+    "ours": {
+      "joints": 196,
+      "cut_types": 10,
+      "weld_types": 4,
+      "seg_types": 10,
+      "util": 0.9943
+    },
+    "verdict": "LOSE_J"
+  },
+  {
+    "level": 14,
+    "spec": "SA-213T91Type1/57x4.5",
+    "elapsed": 15.4,
+    "target_rate": 0.9925,
+    "legacy": {
+      "joints": 90,
+      "cut_types": 7,
+      "weld_types": 1,
+      "util": 0.9833
+    },
+    "ours": {
+      "joints": 0,
+      "cut_types": 11,
+      "weld_types": 0,
+      "seg_types": 8,
+      "util": 0.9833
+    },
+    "verdict": "LOSE_C"
+  },
+  {
+    "level": 15,
+    "spec": "SA-213T91/63.5x7.5",
+    "elapsed": 3.5,
+    "target_rate": 0.9925,
+    "legacy": {
+      "joints": 0,
+      "cut_types": 19,
+      "weld_types": 0,
+      "util": 0.9488
+    },
+    "ours": null,
+    "verdict": "FAIL"
+  },
+  {
+    "ours": null,
+    "legacy": {
+      "joints": 152,
+      "cut_types": 11,
+      "weld_types": 4,
+      "util": 0.9962
+    },
+    "elapsed": 100,
+    "_timeout": true,
+    "level": 16,
+    "spec": "SA-213S30432/45x8",
+    "verdict": "TIMEOUT"
+  },
+  {
+    "ours": null,
+    "legacy": {
+      "joints": 90,
+      "cut_types": 2,
+      "weld_types": 1,
+      "util": 0.9417
+    },
+    "elapsed": 100,
+    "_timeout": true,
+    "level": 17,
+    "spec": "15CrMoG/42x5",
+    "verdict": "TIMEOUT"
+  },
+  {
+    "ours": null,
+    "legacy": {
+      "joints": 532,
+      "cut_types": 20,
+      "weld_types": 16,
+      "util": 0.9994
+    },
+    "elapsed": 0.1,
+    "_err": ".py\", line 32, in main\r\n    group = merge_equivalent_pipes(parse_problem(s[\"problem\"]).groups[0])\r\n                                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^\r\n  File \"D:\\07-codeing\\12-plrj\\���ι�������������������-V0.2\\serpentine-pipe-nesting\\backend\\app\\domain.py\", line 696, in parse_problem\r\n    raise ValueError(\r\nValueError: data[0] contains duplicate pipe identity Parent_node|jlxh|cube_no\r\n",
+    "level": 18,
+    "spec": "SA-213S30432/45x9",
+    "verdict": "FAIL"
+  },
+  {
+    "ours": null,
+    "legacy": {
+      "joints": 924,
+      "cut_types": 36,
+      "weld_types": 13,
+      "util": 0.9984
+    },
+    "elapsed": 100,
+    "_timeout": true,
+    "level": 19,
+    "spec": "SA-213S30432/57x4",
+    "verdict": "TIMEOUT"
+  },
+  {
+    "ours": null,
+    "legacy": {
+      "joints": 1170,
+      "cut_types": 53,
+      "weld_types": 14,
+      "util": 0.9975
+    },
+    "elapsed": 100,
+    "_timeout": true,
+    "level": 20,
+    "spec": "SA-213M S30432/51x5.5",
+    "verdict": "TIMEOUT"
+  }
+]

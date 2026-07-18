@@ -48,7 +48,7 @@ export async function solveProblem(
   problem: AnyRecord,
   timeLimitSeconds?: number | null,
   signal?: AbortSignal,
-  engine?: "baseline" | "route3",
+  engine?: "baseline" | "route3" | "v4",
 ): Promise<SolveResponse> {
   const params = new URLSearchParams();
   if (timeLimitSeconds && Number.isFinite(timeLimitSeconds)) {

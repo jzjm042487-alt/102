@@ -143,7 +143,7 @@ def enum_pipe_pats(pipe, segs, min_wd, min_cut, cap=3000, node_budget=200000,
     return sorted(pats)
 
 
-def evaluate(group, segs, target_len, slack, time_limit, exact=True, indiv=None):
+def evaluate(group, segs, target_len=None, slack=0.0, time_limit=20, exact=True, indiv=None):
     """给定段集，跑内层 ILP：min 总焊口数，用料≤target*(1+slack)。
     indiv: 可选的个体(每管型自身拆分)，用作各管型枚举的必含种子，防止大段
     字母表下 DFS 预算截断误判不可行。返回 dict 或 None（不可行/拼不出）。"""
@@ -213,12 +213,21 @@ def evaluate(group, segs, target_len, slack, time_limit, exact=True, indiv=None)
         cbl[L].append(ci)
     for L, pl in cbl.items():
         m.addCons(quicksum(x[ci] for ci in pl) <= bars[L])
-    m.addCons(quicksum(cuts[ci][0] * x[ci] for ci in range(len(cuts))) <= int(target_len * (1 + slack)))
-    # 车间真实目标：总焊口数最少（Σ 拼法用量×(段数-1)）。种类数由 GA 外层
-    # 的词典序 fitness 处理；内层直接压总焊口数，同时也天然收敛段字母表。
+    # 利用率不是优化目标, 也不是硬约束(用户认知: 利用率是好结果的自然奖励)。
+    # 仅当显式传入 target_len 时才加用料上限; 默认只受库存约束。
+    if target_len is not None:
+        m.addCons(quicksum(cuts[ci][0] * x[ci] for ci in range(len(cuts))) <= int(target_len * (1 + slack)))
+    # 车间真实目标（词典序）：① 总焊口数最少 ② 同焊口数下用料最省(利用率最高)。
+    # 实测教训(20级): 只 min 焊口时 ILP 会"单管单料、剩料浪费"→ 利用率崩到74%
+    # (段供需是 产出≥消耗, 多切的段可白白扔掉)。故加"用料"为次级目标。
+    # SCIP 无原生词典序: 用加权 min joints*W + used_len, W 大到"减1焊口 > 任何
+    # 用料差"即可保证焊口绝对优先, 同焊口下再挤利用率。
     joints_expr = quicksum((len(pipe_pats[i][j]) - 1) * u[(i, j)]
                            for (i, j) in u)
-    m.setObjective(joints_expr, "minimize")
+    usedlen_expr = quicksum(cuts[ci][0] * x[ci] for ci in range(len(cuts)))
+    total_stock_len = sum(st.length * st.quantity for st in group.stocks)
+    W = total_stock_len + 1  # 任一用料方案的 used_len < W, 故 1 焊口 > 全部用料差
+    m.setObjective(joints_expr * W + usedlen_expr, "minimize")
     m.optimize()
     if m.getNSols() == 0:
         return None
@@ -385,12 +394,21 @@ def indiv_segs(indiv):
     return sorted(s)
 
 
-def fitness_key(res):
-    """词典序（车间口径）：总焊口数少优先 → 拼种类少 → 切种类少 → 段种类少
-    → 利用率高。不为省几根材料打乱车间生产部署，故利用率放最后。"""
+def fitness_key(res, target_rate=0.0):
+    """词典序(车间口径): 利用率软下界作准入门槛 -> 焊口第一 -> 拼 -> 切 -> 段 -> 利用率。
+
+    实测教训(20级): 若利用率不参与主排序, GA 会选"0焊口但利用率74%"的垃圾解
+    (料浪费一半, 车间绝不接受)。修法: 把"是否达到车间下界 target_rate"作为最外层
+    门槛 tier(达标=1 优于 跌破=0)。含义:
+      - 只要存在达标解, 绝不选跌破下界的解(哪怕它焊口更少)——废料解不是真优势。
+      - 达标区内部: 焊口最少优先(用户口径"焊口第一"完全保留), 再拼->切->段->利用率。
+      - 全部跌破时(极端): 按利用率缺口大小排(越接近下界越好), 仍焊口次之。
+    target_rate 来自输入 Target_Util_Rate(默认99.25%), 非老软件答案。
+    """
     if res is None:
-        return (-(10**9), -999, -999, -999, 0.0)
-    return (-res["joints"], -res["weld_types"], -res["cut_types"],
+        return (-1, -(10**9), -999, -999, -999, 0.0)
+    meets = 1 if res["util"] >= target_rate - 1e-9 else 0
+    return (meets, -res["joints"], -res["weld_types"], -res["cut_types"],
             -res["seg_types"], round(res["util"], 5))
 
 
@@ -430,17 +448,15 @@ def crossover_indiv(a, b, rng, group):
     return child
 
 
-def ga_run(group, lm, pop_size, gens, tl, rng, verbose=True):
-    target = group.demand_length / lm["util"]
-    base_slack = 0.003
+def ga_run(group, pop_size, gens, tl, rng, verbose=True, patience=8):
+    """纯自约束求解: 只优化 焊口->拼->切->段(利用率是自然结果)。
+    不接收任何老软件指标。停止条件=收敛(连续 patience 代无改进)或跑满。"""
     max_stock = max(s.length for s in group.stocks)
     hi = min(max_stock, max(p.length for p in group.pipes))
-    baseline_util = lm["util"]
 
     best_res = None
     best_segs = None
 
-    # 初始化种群：每个个体 = 每管型一个合法随机拆分
     pop = []
     tries = 0
     while len(pop) < pop_size and tries < pop_size * 20:
@@ -450,52 +466,34 @@ def ga_run(group, lm, pop_size, gens, tl, rng, verbose=True):
             pop.append(indiv)
     if not pop:
         if verbose:
-            print("  无可行初始个体")
+            print("  no feasible initial individual")
         return None, None
 
-    # 紧料样本初代常整代不可行，固定 slack 会让 fitness 全 0、进化退化成随机
-    # 游走。改用自适应 slack：整代不可行就放宽，给启动梯度；出解后逐步收紧。
-    slack = base_slack
+    no_improve = 0
     for gen in range(gens):
         scored = []
-        any_feasible = False
         for indiv in pop:
             segs = indiv_segs(indiv)
-            res = evaluate(group, segs, target, slack, tl, exact=True, indiv=indiv)
-            if res is not None:
-                any_feasible = True
-            scored.append((fitness_key(res), indiv, res))
-        # 整代不可行 → 放宽 slack 重评一次，给进化提供启动梯度
-        if not any_feasible and slack < 0.08:
-            slack = min(0.08, slack * 2 + 0.01)
-            scored = []
-            for indiv in pop:
-                segs = indiv_segs(indiv)
-                res = evaluate(group, segs, target, slack, tl, exact=True, indiv=indiv)
-                if res is not None:
-                    any_feasible = True
-                scored.append((fitness_key(res), indiv, res))
-        elif any_feasible and slack > base_slack:
-            # 已有可行解 → 收紧回目标口径
-            slack = max(base_slack, slack * 0.5)
+            # target_len=None: 不加利用率上限, 只受库存约束
+            res = evaluate(group, segs, None, 0.0, tl, exact=True, indiv=indiv)
+            scored.append((fitness_key(res, group.target_rate), indiv, res))
         scored.sort(key=lambda z: z[0], reverse=True)
+        improved = False
         if scored[0][2] is not None:
-            if best_res is None or fitness_key(scored[0][2]) > fitness_key(best_res):
+            if best_res is None or fitness_key(scored[0][2], group.target_rate) > fitness_key(best_res, group.target_rate):
                 best_res, best_segs = scored[0][2], indiv_segs(scored[0][1])
+                improved = True
+        no_improve = 0 if improved else no_improve + 1
         if verbose:
             r = scored[0][2]
             tag = (f"joints={r['joints']} weld={r['weld_types']} cut={r['cut_types']} "
                    f"seg={r['seg_types']} util={r['util']:.4f}"
-                   if r else f"infeasible(slack={slack:.3f})")
+                   if r else "infeasible")
             print(f"  gen {gen}: best {tag}", flush=True)
-        # 收敛提前停：焊口数不劣于老软件 且 利用率不劣化（验收=不比老软件差）。
-        lg_joints = lm.get("joints") if isinstance(lm, dict) else None
-        if (best_res and gen >= 5 and lg_joints
-                and best_res["joints"] <= lg_joints
-                and best_res["util"] >= baseline_util - 1e-3):
+        # 收敛停止(自约束, 不看老软件): 连续 patience 代无改进
+        if best_res is not None and no_improve >= patience:
             if verbose:
-                print(f"  → gen {gen} 焊口数({best_res['joints']})≤老({lg_joints})"
-                      f"且利用率不劣，停止", flush=True)
+                print(f"  -> gen {gen} converged (no improve {no_improve} gens), stop", flush=True)
             break
         elite = [z[1] for z in scored[:max(2, pop_size // 4)]]
         newpop = list(elite)
@@ -506,7 +504,6 @@ def ga_run(group, lm, pop_size, gens, tl, rng, verbose=True):
             child = crossover_indiv(pa, pb, rng, group)
             if rng.random() < 0.9:
                 child = mutate_indiv(child, group, rng, hi)
-            # 拆分天然合法（random_split/compose_from 保证），直接收
             if all(sp for sp in child):
                 newpop.append(child)
         pop = newpop
@@ -541,7 +538,7 @@ def main():
               f"定尺={sorted({st.length for st in group.stocks})}")
         print(f"  老软件: util={lm['util']:.4f} cut_types={lm['cut_types']} weld_types={lm['weld_types']}")
         t0 = time.monotonic()
-        res, segs = ga_run(group, lm, pop, gen, tl, rng)
+        res, segs = ga_run(group, pop, gen, tl, rng)
         dt = time.monotonic() - t0
         if res is None:
             print(f"  GA 未找到可行解（{dt:.1f}s）")

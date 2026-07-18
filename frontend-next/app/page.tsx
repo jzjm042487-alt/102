@@ -233,7 +233,7 @@ export default function Home() {
   const [samplesError, setSamplesError] = useState("");
   const [selectedId, setSelectedId] = useState("");
   const [timeLimit, setTimeLimit] = useState(300);
-  const [engine, setEngine] = useState<"baseline" | "route3">("route3");
+  const [engine, setEngine] = useState<"baseline" | "route3" | "v4">("route3");
 
   const [solving, setSolving] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -518,7 +518,8 @@ export default function Home() {
             </label>
             <label className="run-field time-field">
               <span>求解引擎</span>
-              <select value={engine} onChange={(e) => setEngine(e.target.value as "baseline" | "route3")}>
+              <select value={engine} onChange={(e) => setEngine(e.target.value as "baseline" | "route3" | "v4")}>
+                <option value="v4">全局最优（arc-flow v4，分类器路由）</option>
                 <option value="route3">全局优化（集合覆盖 v2）</option>
                 <option value="baseline">老求解器（分级放松 MILP）</option>
               </select>

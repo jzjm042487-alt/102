@@ -1904,6 +1904,25 @@ def _solve_problem(
             if r3 is not None:
                 groups.append(r3)
                 continue
+        # Engine "v4": V3 arc-flow global integer model + classifier routing.
+        # Same contract as route3 — returns None (never raises) on infeasible/no
+        # solution, then falls through to baseline so it can only help.
+        if engine == "v4" and has_scip:
+            try:
+                from . import route_v4_arcflow
+
+                r4 = route_v4_arcflow.solve_group(group, budget)
+            except Exception as r4_exc:  # noqa: BLE001 - never break the request
+                r4 = None
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "v4 failed for group %s/%s: %s",
+                    group.material, group.specifications, r4_exc,
+                )
+            if r4 is not None:
+                groups.append(r4)
+                continue
         if has_scip:
             try:
                 result = _solve_group_scip(group, budget)
