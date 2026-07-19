@@ -1888,6 +1888,24 @@ def _solve_problem(
         # contains and returns None (never raises) when it finds no solution in
         # the budget; we then fall through to the baseline path below so route3
         # can only help, never regress solve rate.
+        if engine == "global" and has_scip:
+            try:
+                from . import solver_global
+
+                global_result = solver_global.solve_group(group, budget)
+            except Exception as global_exc:  # noqa: BLE001 - never break the request
+                global_result = None
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "global engine failed for group %s/%s: %s",
+                    group.material,
+                    group.specifications,
+                    global_exc,
+                )
+            if global_result is not None:
+                groups.append(global_result)
+                continue
         if engine == "route3" and has_scip:
             try:
                 from . import route3_setcover
@@ -1987,8 +2005,10 @@ def solve_payload(
     mutates ``payload`` and returns JSON-serialisable Python primitives.
 
     ``engine`` selects the primary solver: ``baseline`` (graded-relaxation MILP,
-    the default) or ``route3`` (global set-covering ILP; falls back to baseline
-    per group when it finds no solution in the budget).
+    the default), ``route3`` (legacy set-covering ILP), ``v4`` (arc-flow +
+    classifier routing), or ``global`` (phased joint cut+weld ILP with util
+    floor).  ``route3``/``v4``/``global`` fall back to baseline per group when
+    they find no solution within ``time_limit_seconds``.
     """
 
     if time_limit_seconds <= 0 or not math.isfinite(time_limit_seconds):
