@@ -228,6 +228,31 @@ interface ComputedRow extends CompareRowDef {
   verdict: "win" | "lose" | "tie";
 }
 
+// 引擎横向对比：每次求解落一条，方便手动切换引擎后并排看差距。
+interface EngineRunRecord {
+  runId: number;
+  engine: "baseline" | "route3" | "v4";
+  sampleId: string;
+  sampleLabel: string;
+  status: string;
+  verified: boolean;
+  utilization: number;
+  weldingJoints: number;
+  usedStockLength: number;
+  cuttingPatternTypes: number;
+  weldingPatternTypes: number;
+  elapsedSeconds: number;
+  timeLimit: number;
+  timedOut: boolean;
+  at: number;
+}
+
+const ENGINE_LABELS: Record<EngineRunRecord["engine"], string> = {
+  v4: "arc-flow v4",
+  route3: "集合覆盖 v2",
+  baseline: "分级放松 MILP",
+};
+
 export default function Home() {
   const [samples, setSamples] = useState<SampleRecord[]>([]);
   const [samplesError, setSamplesError] = useState("");
@@ -243,6 +268,8 @@ export default function Home() {
 
   const [tab, setTab] = useState<"compare" | "cut" | "splice" | "audit">("compare");
   const [toast, setToast] = useState("");
+  const [history, setHistory] = useState<EngineRunRecord[]>([]);
+  const runIdRef = useRef(0);
 
   const abortRef = useRef<AbortController | null>(null);
   const timerRef = useRef<number | null>(null);
@@ -319,12 +346,57 @@ export default function Home() {
       setResult(solved);
       setTab("compare");
       showToast("排料计算已完成");
+      const sysGroups = normalizeGroups(solved).filter((g) => !g.is_legacy_group);
+      const sm = sideMetrics(sysGroups);
+      runIdRef.current += 1;
+      setHistory((prev) => [
+        {
+          runId: runIdRef.current,
+          engine,
+          sampleId: selectedSample.id,
+          sampleLabel: `${selectedSample.com} · ${selectedSample.material} · ${selectedSample.spec}`,
+          status: solved.status ?? "—",
+          verified: verificationPassed(solved),
+          utilization: sm.utilization,
+          weldingJoints: sm.weldingJoints,
+          usedStockLength: sm.usedStockLength,
+          cuttingPatternTypes: sm.cuttingPatternTypes,
+          weldingPatternTypes: sm.weldingPatternTypes,
+          elapsedSeconds: solvedElapsed,
+          timeLimit,
+          timedOut: false,
+          at: Date.now(),
+        },
+        ...prev,
+      ]);
       void logComparison(
         buildCompareRecord(selectedSample, solved, timeLimit, solvedElapsed),
       );
     } catch (error) {
       if (error instanceof DOMException && error.name === "AbortError") return;
       const isNetwork = error instanceof TypeError;
+      const failElapsed = (performance.now() - startedAt) / 1000;
+      runIdRef.current += 1;
+      setHistory((prev) => [
+        {
+          runId: runIdRef.current,
+          engine,
+          sampleId: selectedSample.id,
+          sampleLabel: `${selectedSample.com} · ${selectedSample.material} · ${selectedSample.spec}`,
+          status: isNetwork ? "连接失败" : "求解失败/超时",
+          verified: false,
+          utilization: 0,
+          weldingJoints: 0,
+          usedStockLength: 0,
+          cuttingPatternTypes: 0,
+          weldingPatternTypes: 0,
+          elapsedSeconds: failElapsed,
+          timeLimit,
+          timedOut: !isNetwork,
+          at: Date.now(),
+        },
+        ...prev,
+      ]);
       setSolveError(
         isNetwork
           ? "无法连接排料计算服务，请确认 FastAPI 已在 127.0.0.1:8000 启动。"
@@ -530,6 +602,58 @@ export default function Home() {
           </div>
           {solveError && <p className="run-error">{solveError}</p>}
         </section>
+
+        {history.length > 0 && (
+          <section className="run-panel" aria-label="引擎对比历史" style={{ marginTop: 16 }}>
+            <div className="run-panel-head">
+              <div>
+                <span className="section-kicker">引擎对比历史</span>
+                <h2>切换求解引擎重复求解同一用例，结果自动累积在此并排对比</h2>
+              </div>
+              <button
+                className="secondary-button"
+                onClick={() => setHistory([])}
+                style={{ alignSelf: "center" }}
+              >
+                清空历史
+              </button>
+            </div>
+            <div style={{ overflowX: "auto" }}>
+              <table className="engine-history">
+                <thead>
+                  <tr>
+                    <th style={{ textAlign: "left" }}>引擎</th>
+                    <th style={{ textAlign: "left" }}>用例</th>
+                    <th>状态</th>
+                    <th>校验</th>
+                    <th>利用率</th>
+                    <th>焊口</th>
+                    <th>领用原管</th>
+                    <th>切法</th>
+                    <th>拼法</th>
+                    <th>耗时</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {history.map((h) => (
+                    <tr key={h.runId} className={h.timedOut ? "timed-out" : ""}>
+                      <td style={{ textAlign: "left", fontWeight: 600 }}>{ENGINE_LABELS[h.engine]}</td>
+                      <td style={{ textAlign: "left" }} title={h.sampleId}>{h.sampleLabel}</td>
+                      <td>{h.status}</td>
+                      <td>{h.timedOut ? "—" : h.verified ? "通过" : "告警"}</td>
+                      <td className="mono">{h.timedOut ? "—" : formatRate(h.utilization)}</td>
+                      <td className="mono">{h.timedOut ? "—" : formatNumber(h.weldingJoints, 0)}</td>
+                      <td className="mono">{h.timedOut ? "—" : `${formatLength(h.usedStockLength)} mm`}</td>
+                      <td className="mono">{h.timedOut ? "—" : formatNumber(h.cuttingPatternTypes, 0)}</td>
+                      <td className="mono">{h.timedOut ? "—" : formatNumber(h.weldingPatternTypes, 0)}</td>
+                      <td className="mono">{`${h.elapsedSeconds.toFixed(1)}s / ${h.timeLimit}s`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        )}
 
         {!result && !solving && (
           <section className="empty-hero">

@@ -315,6 +315,13 @@ footer { padding: 24px 2px 0; display: flex; justify-content: space-between; col
 .run-button:disabled { opacity: .5; cursor: not-allowed; transform: none; }
 .run-error { margin: 12px 0 0; padding: 10px 13px; border-radius: 9px; background: #fdecec; color: #c0392b; font-size: 12px; }
 
+.engine-history { width: 100%; border-collapse: collapse; font-size: 12px; margin-top: 12px; }
+.engine-history th, .engine-history td { padding: 8px 10px; border-bottom: 1px solid var(--line); text-align: center; white-space: nowrap; }
+.engine-history thead th { color: #64748b; font-weight: 600; background: #f8fafc; }
+.engine-history tbody tr:hover { background: #f8fafc; }
+.engine-history tr.timed-out td { color: #c0392b; }
+.engine-history .mono { font-variant-numeric: tabular-nums; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+
 .empty-hero { background: #fff; border: 1px solid var(--line); border-radius: 16px; box-shadow: var(--shadow); padding: 56px 24px; text-align: center; }
 .empty-hero-icon { width: 54px; height: 54px; margin: 0 auto 14px; display: grid; place-items: center; border-radius: 14px; background: var(--blue-soft); color: var(--blue); font-size: 22px; }
 .empty-hero h3 { margin: 0 0 8px; font-size: 18px; }
