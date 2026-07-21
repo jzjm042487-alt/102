@@ -568,13 +568,38 @@ def solve_group(group: MaterialGroup, time_limit: float) -> dict[str, Any] | Non
         return None
 
     try:
-        return _run(group, time_limit, started)
+        result = _run(group, time_limit, started)
     except Exception as exc:  # noqa: BLE001 - opt-in engine must never break request
         _LOG.warning(
             "route-b R&CG failed for group %s/%s: %s",
             group.material, group.specifications, exc,
         )
+        result = None
+    if result is not None:
+        return result
+
+    # B-class fallback: tight welded groups where the integer master is infeasible
+    # inside R&CG's pool (a single tube spliced from several bars, razor-thin
+    # margin).  Route C's alphabet-driven branch-and-price closes exactly those.
+    # It re-solves from scratch, so give it a fresh budget rather than R&CG's
+    # possibly-exhausted remainder.
+    try:
+        from .route_c_bp import solve_bp
+    except Exception:
         return None
+    bp_started = time.monotonic()
+    out = solve_bp(group, time_limit, bp_started)
+    if out is None:
+        return None
+    weld_counts, cut_counts = out
+    return _assemble_group_result(
+        group,
+        "route_c_bp",
+        "BP_SOLVED",
+        weld_counts,
+        cut_counts,
+        time.monotonic() - started,
+    )
 
 
 def _run(group: MaterialGroup, time_limit: float, started: float) -> dict[str, Any] | None:

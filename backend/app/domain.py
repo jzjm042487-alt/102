@@ -304,17 +304,19 @@ def _parse_pipe(
     input_joints = _nonnegative_int(
         max_joints_raw, field_name=f"{prefix}.Max_Weldingjoint_Number"
     )
-    # A splice weld is only permitted on a straight section, at most one per
-    # weld_interval of overall length, and never above the hard cap.  The input
-    # value is treated as an upper bound only: a placeholder such as 2000 is
-    # silently clamped by the process rule instead of driving the model.
+    # A splice weld is only permitted on a straight section (enforced per-position
+    # at solve time by ``_legal_pattern`` via forbidden zones and adjacency rules)
+    # and never above the hard cap.  The input value is treated as an upper bound
+    # only: a placeholder such as 2000 is silently clamped by the process rule.
     #
-    # The ``length // weld_interval`` rule is an *upper* bound on how many splice
-    # welds a long tube may carry; it must not drive a short tube's weldability
-    # to zero.  A tube shorter than one weld_interval can still legitimately be
-    # spliced from two stock pieces (the shop and the incumbent software both do
-    # this to nest short tubes when whole bars would waste material), so when the
-    # input explicitly permits welding we keep at least a single joint available.
+    # ``length // weld_interval`` bounds how many splice welds a tube may carry.
+    # The default interval must be small enough to reproduce the incumbent
+    # software's behaviour -- it splices a 5173mm tube with two joints, which a
+    # coarse 3000mm interval would wrongly cap at one -- yet large enough not to
+    # invite pathological "shatter" packings (e.g. cutting a 17310mm tube into
+    # thirteen 1331mm slivers) that waste material once max_joints is high.  A
+    # tube shorter than one interval can still be spliced from two stock pieces
+    # (shop practice for nesting short tubes), so keep at least a single joint.
     process_limit = min(length // weld_interval, max_joints_cap)
     if process_limit == 0 and input_joints >= 1 and max_joints_cap >= 1:
         process_limit = 1
