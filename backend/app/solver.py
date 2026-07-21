@@ -1906,6 +1906,22 @@ def _solve_problem(
             if global_result is not None:
                 groups.append(global_result)
                 continue
+        if engine == "rcg" and has_scip:
+            try:
+                from . import route_b_rcg
+
+                rcg = route_b_rcg.solve_group(group, budget)
+            except Exception as rcg_exc:  # noqa: BLE001 - never break the request
+                rcg = None
+                import logging as _logging
+
+                _logging.getLogger(__name__).warning(
+                    "rcg failed for group %s/%s: %s",
+                    group.material, group.specifications, rcg_exc,
+                )
+            if rcg is not None:
+                groups.append(rcg)
+                continue
         if engine == "route3" and has_scip:
             try:
                 from . import route3_setcover
@@ -2006,8 +2022,9 @@ def solve_payload(
 
     ``engine`` selects the primary solver: ``baseline`` (graded-relaxation MILP,
     the default), ``route3`` (legacy set-covering ILP), ``v4`` (arc-flow +
-    classifier routing), or ``global`` (phased joint cut+weld ILP with util
-    floor).  ``route3``/``v4``/``global`` fall back to baseline per group when
+    classifier routing), ``global`` (phased joint cut+weld ILP with util
+    floor), or ``rcg`` (two-stage row-and-column generation).
+    ``rcg``/``route3``/``v4``/``global`` fall back to baseline per group when
     they find no solution within ``time_limit_seconds``.
     """
 

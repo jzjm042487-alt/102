@@ -308,7 +308,16 @@ def _parse_pipe(
     # weld_interval of overall length, and never above the hard cap.  The input
     # value is treated as an upper bound only: a placeholder such as 2000 is
     # silently clamped by the process rule instead of driving the model.
+    #
+    # The ``length // weld_interval`` rule is an *upper* bound on how many splice
+    # welds a long tube may carry; it must not drive a short tube's weldability
+    # to zero.  A tube shorter than one weld_interval can still legitimately be
+    # spliced from two stock pieces (the shop and the incumbent software both do
+    # this to nest short tubes when whole bars would waste material), so when the
+    # input explicitly permits welding we keep at least a single joint available.
     process_limit = min(length // weld_interval, max_joints_cap)
+    if process_limit == 0 and input_joints >= 1 and max_joints_cap >= 1:
+        process_limit = 1
     max_joints = min(input_joints, process_limit)
     if input_joints > process_limit:
         pipe_warnings.append(

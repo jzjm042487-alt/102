@@ -343,6 +343,41 @@ def solve_pure_cut(group, tl=30.0, verbose=True):
     }
 
 
+def _diagnose(group, result, pure_fallback, util_floor=None, note=None):
+    """S6 诊断透传: 给结果附一段结构化诊断, 说明解的成色与可能的欠优原因。
+
+    不静默 fallback: 当发生'焊接无解回退纯切'、'利用率未达门槛'、'焊口远高于理论
+    下界'等情况时, 用结构化 code 标注, 让调用方(CLI/回归/报告)能显式暴露, 而非
+    看到一个数字就当成正常最优。
+    """
+    import math
+    codes = []
+    uf = _util_floor(group, util_floor)
+    max_stock = max(s.length for s in group.stocks)
+    # 理论最小焊口下界: 每管至少 ⌈L/max_stock⌉ 段 -> ⌈L/max_stock⌉-1 焊口。
+    lb_joints = sum((math.ceil(p.length / max_stock) - 1) * p.demand for p in group.pipes)
+    if result is None:
+        codes.append(("NO_SOLUTION", "焊接与纯切均无可行解"))
+        return {"codes": codes, "lb_joints": lb_joints, "util_floor": uf}
+    if note:
+        codes.append(note)
+    util = result.get("util", 0.0)
+    if util + 1e-9 < uf:
+        codes.append(("UTIL_BELOW_FLOOR",
+                      f"利用率 {util:.4f} < 硬底线 {uf:.4f}(库存物理受限或无更优解)"))
+    if pure_fallback is not None and result is pure_fallback:
+        codes.append(("FELL_BACK_TO_PURECUT",
+                      "焊接未能给出不劣于纯切的解 -> 采用纯切兜底(0 焊口)"))
+    j = result.get("joints", 0)
+    if lb_joints > 0 and j > lb_joints:
+        gap = (j - lb_joints) / lb_joints
+        if gap > 0.15:
+            codes.append(("JOINTS_ABOVE_LB",
+                          f"焊口 {j} 高于理论下界 {lb_joints}(+{gap:.0%}); "
+                          f"可能段集不足/段集受库存约束导致未达最优分段"))
+    return {"codes": codes, "lb_joints": lb_joints, "util_floor": uf}
+
+
 def _better_of(weld, pure, group, verbose=False):
     """在焊接解与纯切兜底解之间取优。
 
@@ -379,7 +414,21 @@ def _better_of(weld, pure, group, verbose=False):
     return pure if pick_pure else weld
 
 
-def solve_arcflow(group, tl=120.0, step=None, verbose=True):
+def _util_floor(group, util_floor=None):
+    """利用率硬底线 = max(0.95, legacy_util - 1e-3)（用户拍板）。
+
+    solve_arcflow 内拿不到 legacy_util, 由调用方(CLI/回归)传入 util_floor;
+    未传时退回 group.target_rate(输入目标利用率), 再退回 0.95。
+    底线只作可行性约束, 绝不作优化目标(util 在词典序末档被动最大化)。
+    """
+    if util_floor is not None:
+        return max(0.95, util_floor)
+    if group.target_rate is not None:
+        return max(0.95, group.target_rate)
+    return 0.95
+
+
+def solve_arcflow(group, tl=120.0, step=None, verbose=True, util_floor=None):
     from pyscipopt import Model, quicksum
     min_wd, min_cut = group.min_weld_distance, group.min_cut_length
     kerf = group.blade_margin
@@ -397,6 +446,8 @@ def solve_arcflow(group, tl=120.0, step=None, verbose=True):
     if verbose:
         print(f"  分类: {cls['kind']} [{cls['geom']}] — {cls['reason']}", flush=True)
     if cls["kind"] == "infeasible":
+        if verbose:
+            print(f"  [诊断] INFEASIBLE: {cls['reason']}", flush=True)
         return None
     if cls["kind"] == "pure_cut":
         return cls["pure_result"]
@@ -434,7 +485,13 @@ def solve_arcflow(group, tl=120.0, step=None, verbose=True):
             group, pipe_graphs, seg_sorted, stock_qty, max_stock,
             min_wd, min_cut, kerf, tl=tl, verbose=verbose,
             pure_incumbent=pure_fallback)
-        return _better_of(weld, pure_fallback, group, verbose)
+        result = _better_of(weld, pure_fallback, group, verbose)
+        if result is not None:
+            result["diagnosis"] = _diagnose(group, result, pure_fallback, util_floor)
+            if verbose and result["diagnosis"]["codes"]:
+                for code, msg in result["diagnosis"]["codes"]:
+                    print(f"  [诊断] {code}: {msg}", flush=True)
+        return result
     elif verbose:
         print(f"  切层弧数≈{n_cut_arcs} -> 原 arc-flow", flush=True)
 
@@ -538,7 +595,8 @@ def solve_arcflow(group, tl=120.0, step=None, verbose=True):
                 m.addCons(quicksum(inflow[pos]) == quicksum(outflow[pos]))
         used_vars[L] = used
 
-    # ── 耦合: 每段长 ℓ, 切层产出 >= 拼层消耗 ──
+    # ── 耦合: 每段长 ℓ, 切层产出 == 拼层消耗(精确段平衡) ──
+    # 用 == 而非 >=: 禁止切层过产无人消耗的"幽灵段"(否则利用率虚高且 verifier 段平衡报错)。
     for seg in seg_sorted:
         prod_terms = []
         for L in stock_qty:
@@ -551,46 +609,379 @@ def solve_arcflow(group, tl=120.0, step=None, verbose=True):
                 if s2 == seg:
                     cons_terms.append(g[i][(a, b)])
         if prod_terms or cons_terms:
-            m.addCons(quicksum(prod_terms) - quicksum(cons_terms) >= 0)
+            m.addCons(quicksum(prod_terms) - quicksum(cons_terms) == 0)
 
-    # ── 目标 Pass1: min 用料总长 ──
+    # ── 词典序求解(SPEC §二): 焊口第一, 利用率是底线约束+末档 tiebreak ──
     usedlen = quicksum(used_vars[L] * L for L in stock_qty)
-    # arc-flow LP 松弛极紧(实测 L7 达 0.9999), 整数最优接近之。
-    # 慢在闭合整数 gap -> 开激进可行性 heuristics 尽快拿好 incumbent。
+    joints = quicksum(
+        (quicksum(g[i][(a, b)] for (a, b, s2) in pipe_graphs[i][1]) - pipes[i].demand)
+        for i in range(len(pipes))
+    )
+    # 利用率硬底线: used_len <= demand_length / util_floor(等价 util>=floor)。
+    uf = _util_floor(group, util_floor)
+    cap = group.demand_length / uf if uf > 0 else None
+    floor_cons = None
+    if cap is not None:
+        floor_cons = m.addCons(usedlen <= cap + 1e-6, name="util_floor")
+
+    # ── Pass1: min 总焊口(s.t. util>=floor) ── 焊口是 SPEC 第一优先级。
+    # arc-flow LP 松弛极紧(实测 L7 达 0.9999); 开激进可行性 heuristics 尽快拿好 incumbent。
     from pyscipopt import SCIP_PARAMEMPHASIS
     m.setEmphasis(SCIP_PARAMEMPHASIS.FEASIBILITY)
+    m.setObjective(joints, "minimize")
+    t0 = time.time()
+    m.optimize()
+    if m.getNSols() == 0 and floor_cons is not None and m.getStatus() == "infeasible":
+        # 底线过紧(库存物理顶死, 如 L7 达不到 target)。不能直接删底线后 min 焊口
+        # ——那会退化成纯切 0 焊口低利用率废解(如 L7 0.7435)。正确做法: 先 min 用料
+        # 探明'可达到的最高利用率'U_min, 再把底线替换为 U_min(可达最优), 在其内 min 焊口。
+        if verbose:
+            print(f"  Pass1 底线 floor={uf:.4f} 不可达 -> 探最高可达利用率", flush=True)
+        m.freeTransform()
+        m.delCons(floor_cons)
+        floor_cons = None
+        m.setParam("limits/time", tl)
+        m.setEmphasis(SCIP_PARAMEMPHASIS.FEASIBILITY)
+        m.setObjective(usedlen, "minimize")
+        m.optimize()
+        if m.getNSols() > 0:
+            u_min = m.getObjVal()
+            if verbose:
+                print(f"    可达最高利用率={group.demand_length/u_min:.4f} "
+                      f"(用料={u_min:.0f}) -> 以此为底线 min 焊口", flush=True)
+            m.freeTransform()
+            m.setParam("limits/time", tl)
+            floor_cons = m.addCons(usedlen <= u_min + 1e-6, name="util_floor_achievable")
+            m.setEmphasis(SCIP_PARAMEMPHASIS.FEASIBILITY)
+            m.setObjective(joints, "minimize")
+            m.optimize()
+    if m.getNSols() == 0:
+        if verbose:
+            print(f"  Pass1(min焊口) 无解 status={m.getStatus()} ({time.time()-t0:.1f}s)",
+                  flush=True)
+        return _better_of(None, pure_fallback, group, verbose)
+    j_star = m.getObjVal()
+    if verbose:
+        print(f"  Pass1(min焊口): 焊口={j_star:.0f} floor={uf:.4f} "
+              f"status={m.getStatus()} ({time.time()-t0:.1f}s)", flush=True)
+
+    # ── Pass2: 固定焊口<=J*, min 用料(末档 max util 的等价) ──
+    # 在焊口最优的前提下再收紧用料 -> 利用率被动最大化(SPEC 第 5 档)。
+    m.freeTransform()
+    m.setParam("limits/time", tl)
+    m.addCons(joints <= j_star + 1e-6)
     m.setObjective(usedlen, "minimize")
     t0 = time.time()
     m.optimize()
     if m.getNSols() == 0:
         if verbose:
-            print(f"  Pass1 无解 status={m.getStatus()} ({time.time()-t0:.1f}s)", flush=True)
+            print(f"  Pass2(min用料) 无解 status={m.getStatus()}", flush=True)
         return _better_of(None, pure_fallback, group, verbose)
-    u_star = m.getObjVal()
     if verbose:
-        util1 = group.demand_length / u_star if u_star else 0
-        print(f"  Pass1: 用料={u_star:.0f} util={util1:.4f} "
+        u_star = m.getObjVal()
+        util2 = group.demand_length / u_star if u_star else 0
+        print(f"  Pass2(min用料): 用料={u_star:.0f} util={util2:.4f} "
               f"status={m.getStatus()} ({time.time()-t0:.1f}s)", flush=True)
 
-    # ── Pass2: 固定用料<=U*, min 总焊口 ──
-    m.freeTransform()
-    m.setParam("limits/time", tl)
-    m.addCons(usedlen <= u_star + 1e-6)
-    joints = quicksum(
-        (quicksum(g[i][(a, b)] for (a, b, s2) in pipe_graphs[i][1]) - pipes[i].demand)
-        for i in range(len(pipes))
-    )
-    m.setObjective(joints, "minimize")
-    t0 = time.time()
-    m.optimize()
-    if m.getNSols() == 0:
-        if verbose:
-            print(f"  Pass2 无解 status={m.getStatus()}", flush=True)
+    # ── 抽取 Pass2 解(基线: 焊口最优 + 用料最优) ──
+    weld2 = _extract(group, pipes, pipe_graphs, g, f, used_vars, stock_qty, m, verbose, fseg=fseg)
+    j_final = weld2["joints"]
+    u_final = weld2["used_len"]
+
+    # ── Pass3/4/5: 种类压缩(拼法→切法→段) —— 在'实际产出段集'上重解, 段集极小(通常≤8)
+    # -> 路径枚举可控(实测 L7=1, L8=5)。保持焊口<=J*、用料<=U* 不劣化。 ──
+    produced_segs = _produced_seg_set(f, fseg, used_vars, stock_qty, m)
+    weld3 = _compress_types(
+        group, pipes, produced_segs, stock_qty, j_final, u_final,
+        tl=tl, verbose=verbose)
+    weld = weld3 if weld3 is not None else weld2
+    result = _better_of(weld, pure_fallback, group, verbose)
+    if result is not None:
+        result["diagnosis"] = _diagnose(group, result, pure_fallback, util_floor)
+        if verbose and result["diagnosis"]["codes"]:
+            for code, msg in result["diagnosis"]["codes"]:
+                print(f"  [诊断] {code}: {msg}", flush=True)
+    return result
+
+
+def _produced_seg_set(f, fseg, used_vars, stock_qty, m):
+    """从 Pass2 解读出'实际被切层产出的段长集合'(去重)。
+    种类压缩只需在此小段集上重解(段种类通常≤8), 路径枚举可控。"""
+    segs = set()
+    for L in stock_qty:
+        for (a, b), var in f[L].items():
+            if round(m.getVal(var)) > 0:
+                segs.add(fseg[L][(a, b)])
+    return sorted(segs)
+
+
+def _enum_pipe_patterns(pipe, seg_set, min_wd, min_cut, max_stock, budget=50000):
+    """枚举管型 pipe 在给定段集内的全部合法拼法(0->L 路径, 段序列)。
+    合法性: 段∈seg_set 且<=max_stock; 内部段(两端都是内部焊口)>=min_wd;
+    焊口绝对位置(每段末端, 除最后到 L)须 weld_allowed(禁焊区/间距由 build 时保证的
+    位置合法性在此重判)。段数<=max_joints+1。返回 list[tuple(段序列)]。"""
+    L = pipe.length
+    segs = sorted(s for s in seg_set if s <= max_stock)
+    max_parts = pipe.max_joints + 1
+    out = []
+    cnt = [0]
+
+    def dfs(pos, seq):
+        if cnt[0] > budget or len(seq) > max_parts:
+            return
+        if pos == L:
+            out.append(tuple(seq))
+            return
+        for s in segs:
+            nb = pos + s
+            if nb > L:
+                continue
+            is_first = pos == 0
+            is_last = nb == L
+            # 内部段(两端皆内部焊口)须>=min_wd
+            if not is_first and not is_last and s < min_wd:
+                continue
+            # 焊口绝对位置(段末端, 非管尾)须合法
+            if not is_last and not pipe.weld_allowed(nb):
+                continue
+            cnt[0] += 1
+            seq.append(s)
+            dfs(nb, seq)
+            seq.pop()
+
+    dfs(0, [])
+    return out
+
+
+def _enum_cut_patterns(L, seg_sorted, kerf, budget=200000):
+    """枚举定尺 L 在 seg_sorted 内的所有切法(段多重集, 计 kerf 锯缝)。
+    切法 = 若干段填入 L, 满足 Σseg + (段数-1)*kerf <= L。返回 list[tuple(sorted segs)]。
+    段集小(通常≤8) -> 组合可控。用非降序段枚举避免多重集重复。"""
+    out = []
+    n = len(seg_sorted)
+    cnt = [0]
+
+    def dfs(start, used, segs):
+        if cnt[0] > budget:
+            return
+        # 记录当前(非空)切法
+        if segs:
+            out.append(tuple(segs))
+        for j in range(start, n):
+            s = seg_sorted[j]
+            add = s + (kerf if segs else 0)
+            if used + add > L:
+                continue
+            cnt[0] += 1
+            segs.append(s)
+            dfs(j, used + add, segs)
+            segs.pop()
+
+    dfs(0, 0, [])
+    return out
+
+
+def _compress_types(group, pipes, seg_set, stock_qty, j_cap, u_cap,
+                    tl=60.0, verbose=True, col_cap=20000, cut_tl=None):
+    """在'实际产出段集'上重解, 词典序压缩种类(SPEC §二 第2/3/4/5档):
+       Pass3 min 拼法种类; Pass4 min 切法种类; Pass5 min 段种类 + min 用料。
+    约束: 焊口<=j_cap、用料<=u_cap 全程不劣化; 每档冻结上一档最优。
+    cut_tl: Pass4(min切法种类)单独时限(默认=tl); 切法种类收敛慢, 可给更长时间。
+
+    模型(全列式, 精确计种类):
+      拼层: 路径变量 xp[(i,k)](段集小 -> 路径少, 可枚举); zW[type] 计拼法种类。
+      切层: 切法列变量 yc[(L,k)]; zC[type] 计切法种类。
+      段: zS[seg] 计段种类。
+      段供需精确平衡: 切层产出(ℓ) == 拼层消耗(ℓ)(满足 verifier SEGMENT_BALANCE)。
+    """
+    from pyscipopt import Model, quicksum, SCIP_PARAMEMPHASIS
+    min_wd, min_cut = group.min_weld_distance, group.min_cut_length
+    kerf = group.blade_margin
+    max_stock = max(s.length for s in group.stocks)
+    seg_sorted = sorted(seg_set)
+    if not seg_sorted:
         return None
 
-    # ── 抽取解 ──
-    weld = _extract(group, pipes, pipe_graphs, g, f, used_vars, stock_qty, m, verbose, fseg=fseg)
-    return _better_of(weld, pure_fallback, group, verbose)
+    # ── 每管型枚举拼法(段集内) ──
+    pipe_pats = {}
+    total_pats = 0
+    for i, p in enumerate(pipes):
+        pats = _enum_pipe_patterns(p, seg_set, min_wd, min_cut, max_stock)
+        if not pats:
+            if verbose:
+                print(f"  种类压缩: 管型 {i}(L={p.length}) 在产出段集内无合法拼法 -> 跳过压缩",
+                      flush=True)
+            return None
+        pipe_pats[i] = pats
+        total_pats += len(pats)
+    # ── 每定尺枚举切法列 ──
+    cut_pats = {}
+    total_cuts = 0
+    for L in stock_qty:
+        cps = _enum_cut_patterns(L, seg_sorted, kerf)
+        cut_pats[L] = cps
+        total_cuts += len(cps)
+    if verbose:
+        print(f"  种类压缩: 段集={len(seg_sorted)} 拼法列={total_pats} 切法列={total_cuts}",
+              flush=True)
+    # 列数爆炸保护: 枚举列过多会把压缩 MILP 压垮(得不偿失), 跳过压缩保留原解。
+    if total_pats + total_cuts > col_cap:
+        if verbose:
+            print(f"  种类压缩: 列数={total_pats + total_cuts} 过多 -> 跳过(保留原解)",
+                  flush=True)
+        return None
+
+    m = Model("compress")
+    m.hideOutput()
+    m.setParam("limits/time", tl)
+
+    # 拼层路径变量 + 需求满足
+    xp = {}
+    for i, pats in pipe_pats.items():
+        for k in range(len(pats)):
+            xp[(i, k)] = m.addVar(vtype="I", lb=0, name=f"xp_{i}_{k}")
+        m.addCons(quicksum(xp[(i, k)] for k in range(len(pats))) == pipes[i].demand)
+
+    # 拼法种类 setup(去管型身份, 与 verifier weld_types 口径一致: 仅计 >=2 段)
+    weld_type_ids = {}
+    for pats in pipe_pats.values():
+        for seq in pats:
+            if len(seq) >= 2:
+                weld_type_ids.setdefault(seq, len(weld_type_ids))
+    zW = {tid: m.addVar(vtype="B", name=f"zW_{tid}") for tid in weld_type_ids.values()}
+    for i, pats in pipe_pats.items():
+        for k, seq in enumerate(pats):
+            if len(seq) >= 2:
+                m.addCons(xp[(i, k)] <= pipes[i].demand * zW[weld_type_ids[seq]])
+
+    # 切层切法列变量 + 切法种类 setup(去定尺? verifier cut_types 按(定尺,段多重集)计,
+    # 这里 type = (L, 段多重集) 保守区分定尺)
+    yc = {}
+    cut_type_ids = {}
+    for L, cps in cut_pats.items():
+        for k, segs in enumerate(cps):
+            yc[(L, k)] = m.addVar(vtype="I", lb=0, name=f"yc_{L}_{k}")
+            cut_type_ids.setdefault((L, segs), len(cut_type_ids))
+    zC = {tid: m.addVar(vtype="B", name=f"zC_{tid}") for tid in cut_type_ids.values()}
+    # 定尺根数上界: 单条切法用量 <= 该定尺可用根数
+    for L, cps in cut_pats.items():
+        m.addCons(quicksum(yc[(L, k)] for k in range(len(cps))) <= stock_qty[L])
+        for k, segs in enumerate(cps):
+            m.addCons(yc[(L, k)] <= stock_qty[L] * zC[cut_type_ids[(L, segs)]])
+
+    # 段种类 setup: zS[seg]=1 若该段被产出
+    zS = {seg: m.addVar(vtype="B", name=f"zS_{seg}") for seg in seg_sorted}
+
+    def weld_consume(seg):
+        return [sum(1 for s in seq if s == seg) * xp[(i, k)]
+                for i, pats in pipe_pats.items() for k, seq in enumerate(pats)
+                if seg in seq]
+
+    def cut_produce(seg):
+        return [segs.count(seg) * yc[(L, k)]
+                for L, cps in cut_pats.items() for k, segs in enumerate(cps)
+                if seg in segs]
+
+    # 段供需精确平衡 + 段种类点亮
+    for seg in seg_sorted:
+        prod = cut_produce(seg)
+        cons = weld_consume(seg)
+        m.addCons(quicksum(prod) == quicksum(cons))
+        # zS[seg]=1 当该段被产出(cons<=BigM*zS)
+        bigm = sum(p.demand * (p.max_joints + 1) for p in pipes)
+        m.addCons(quicksum(cons) <= bigm * zS[seg])
+
+    # 焊口约束(不劣化)
+    joints = quicksum((len(seq) - 1) * xp[(i, k)]
+                      for i, pats in pipe_pats.items() for k, seq in enumerate(pats))
+    m.addCons(joints <= j_cap + 1e-6)
+    # 用料(不劣化)
+    usedlen = quicksum(L * yc[(L, k)] for L, cps in cut_pats.items()
+                       for k in range(len(cps)))
+    m.addCons(usedlen <= u_cap + 1e-6)
+
+    m.setEmphasis(SCIP_PARAMEMPHASIS.FEASIBILITY)
+
+    def solve_pass(obj_expr, name, freeze_prev=None, pass_tl=None):
+        """求一档并返回目标值; freeze_prev: (expr, val) 冻结上一档最优。"""
+        m.freeTransform()
+        m.setParam("limits/time", pass_tl if pass_tl is not None else tl)
+        if freeze_prev is not None:
+            expr, val = freeze_prev
+            m.addCons(expr <= val + 1e-6)
+        m.setObjective(obj_expr, "minimize")
+        t0 = time.time()
+        m.optimize()
+        if m.getNSols() == 0:
+            if verbose:
+                print(f"  {name} 无解 status={m.getStatus()} ({time.time()-t0:.1f}s)",
+                      flush=True)
+            return None, time.time() - t0
+        return round(m.getObjVal()), time.time() - t0
+
+    zW_sum = quicksum(zW.values()) if zW else None
+    zC_sum = quicksum(zC.values()) if zC else None
+    zS_sum = quicksum(zS.values())
+
+    # Pass3: min 拼法种类
+    if zW_sum is not None:
+        wt_star, dt = solve_pass(zW_sum, "Pass3(min拼法种类)")
+        if wt_star is None:
+            return None
+        if verbose:
+            print(f"  Pass3(min拼法种类): {wt_star} ({dt:.1f}s)", flush=True)
+    else:
+        wt_star = 0
+
+    # Pass4: min 切法种类(冻结拼法种类) —— 切法收敛慢, 用 cut_tl 给更长时间
+    ct_star, dt = solve_pass(
+        zC_sum, "Pass4(min切法种类)",
+        freeze_prev=(zW_sum, wt_star) if zW_sum is not None else None,
+        pass_tl=cut_tl)
+    if ct_star is None:
+        return None
+    if verbose:
+        print(f"  Pass4(min切法种类): {ct_star} ({dt:.1f}s)", flush=True)
+
+    # Pass5: min 段种类(冻结切法种类) —— 用料已由 u_cap 约束封顶(末档不再单列)
+    st_star, dt = solve_pass(zS_sum, "Pass5(min段种类)",
+                             freeze_prev=(zC_sum, ct_star) if zC_sum is not None else None)
+    if st_star is None:
+        return None
+    if verbose:
+        print(f"  Pass5(min段种类): {st_star} ({dt:.1f}s)", flush=True)
+
+    return _extract_compress2(group, pipes, pipe_pats, xp, cut_pats, yc, stock_qty, m)
+
+
+def _extract_compress2(group, pipes, pipe_pats, xp, cut_pats, yc, stock_qty, m):
+    """从全列式压缩模型抽取解(拼法路径列 + 切法列)。"""
+    weld_patterns = defaultdict(int)
+    total_joints = 0
+    for i, pats in pipe_pats.items():
+        for k, seq in enumerate(pats):
+            v = round(m.getVal(xp[(i, k)]))
+            if v > 0:
+                weld_patterns[(i, seq)] += v
+                total_joints += (len(seq) - 1) * v
+    cut_patterns = defaultdict(int)
+    used_len = 0
+    seg_used = set()
+    for L, cps in cut_pats.items():
+        for k, segs in enumerate(cps):
+            v = round(m.getVal(yc[(L, k)]))
+            if v > 0:
+                cut_patterns[(L, tuple(sorted(segs)))] += v
+                used_len += L * v
+                seg_used.update(segs)
+    weld_types = len({seq for (i, seq) in weld_patterns if len(seq) >= 2})
+    util = group.demand_length / used_len if used_len else 0
+    return {
+        "joints": total_joints, "cut_types": len(cut_patterns), "weld_types": weld_types,
+        "seg_types": len(seg_used), "used_len": used_len, "util": util,
+        "cut_patterns": dict(cut_patterns), "weld_patterns": dict(weld_patterns),
+        "solver": "compress",
+    }
 
 
 def _grid_seg_set(pipes, max_stock, min_wd, min_cut, step):
@@ -617,6 +1008,161 @@ def _grid_seg_set(pipes, max_stock, min_wd, min_cut, step):
                 segs.add(rem)
             a += step
     return sorted(segs)
+
+
+def _build_std_seg_set(group, stock_qty, S):
+    """混合段集(整根管 + 标准段拆分片): 给定标准段 S, 段集包含
+      (1) 每种管长本身(整根段, 0 焊口, 利于低焊口打包);
+      (2) 标准段 S 及每管的拆分片 (L 用 S 分割后的剩余, 利于填满母料空隙)。
+    整根段压焊口/拼法, 拆分片提供切割灵活性 -> 焊口/拼法/切法同步压低。
+    返回排序段列表, 若某管无法在段集内合法拼出则返回 None。"""
+    min_wd = group.min_weld_distance
+    min_cut = max(group.min_cut_length, 1)
+    max_stock = max(s.length for s in group.stocks)
+    if S < max(min_wd, min_cut) or S > max_stock:
+        return None
+    segs = set()
+    for p in group.pipes:
+        L = p.length
+        # (1) 整根段: 可整根切出(<=母料)则加入, 使该管可 0 焊口
+        if min_cut <= L <= max_stock:
+            segs.add(L)
+        # (2) 标准段拆分片: 管可焊且比 S 长时, 拆成 S + (L-S)
+        if p.max_joints >= 1 and L > S:
+            tail = L - S
+            if tail >= min_wd:  # 拆分片须 >= 最小焊距(作内部/端段)
+                segs.add(S)
+                segs.add(tail)
+        # 校验: 该管至少有一种合法拼法(整根 或 拆分)
+        if L > max_stock and (p.max_joints < 1 or L - S < min_wd or S > max_stock):
+            return None
+    return sorted(s for s in segs if min_cut <= s <= max_stock)
+
+
+def _std_seg_candidates(group, stock_qty):
+    """候选标准段 S: 各母料的 1/2, 1/3(优先能整除母料/使母料近乎无废者)。
+    S 决定切层能否近乎无废填满母料 -> 决定标准段压缩是否可行, 故尝试多个候选。"""
+    max_stock = max(s.length for s in group.stocks)
+    lens = sorted(stock_qty)
+    cands = []
+    for L in lens:
+        for d in (2, 3):
+            s = L // d
+            if s not in cands:
+                cands.append(s)
+    # 也试最短/最长母料的一半
+    cands = [c for c in dict.fromkeys(cands) if 1 <= c <= max_stock]
+    return cands
+
+
+def _try_std_compress(group, pipes, stock_qty, ffd, tl=120.0, verbose=True):
+    """FFD 兜底档的标准段种类压缩: 逐个候选标准段构造段集 -> _compress_types 压
+    拼法/切法/段种类。可行性取决于段能否近乎无废填满母料(与母料是否规整强相关),
+    直接试解判定; 找到第一个成功且不劣于 FFD 焊口 3 倍的解即采纳。"""
+    stock_len = sum(L * q for L, q in stock_qty.items())
+    best = None
+    for S in _std_seg_candidates(group, stock_qty):
+        seg_set = _build_std_seg_set(group, stock_qty, S)
+        if not seg_set:
+            continue
+        ncut = 0
+        skip = False
+        for L in stock_qty:
+            ncut += len(_enum_cut_patterns(L, seg_set, group.blade_margin))
+            if ncut > 60000:
+                skip = True
+                break
+        if skip:
+            if verbose:
+                print(f"  标准段压缩(S={S}): 切法列>{ncut} 过多 -> 试下一候选", flush=True)
+            continue
+        if verbose:
+            print(f"  标准段压缩(S={S}): 段集={len(seg_set)} 切法列≈{ncut}", flush=True)
+        comp = _compress_types(group, pipes, seg_set, stock_qty,
+                               j_cap=ffd["joints"] * 3, u_cap=stock_len,
+                               tl=min(tl, 60.0), verbose=verbose, col_cap=60000,
+                               cut_tl=200.0)
+        if comp is not None:
+            best = comp
+            break  # 采纳首个可行解(候选按母料规整度排序, 越前越优)
+    return best
+
+
+def _ffd_weld_incumbent(group):
+    """带焊 FFD 保底可行解: 需求管按长降序首尾相接成链, 按母料逐根切满,
+    管被母料边界截断处产生焊口。几何上总能构造(总长匹配), 利用率天然接近满。
+
+    专治 L16/L20 这类'纯切不可行(库存根数<需求根数, 必须焊接省料)'的极限档:
+    coarse-to-fine 每档 MILP 在 util 硬门槛下连一个可行整数解都构造不出而 timelimit,
+    此 FFD 解作为兜底返回(可行且高利用率), 至少给出可对比的排料方案。
+    返回与其它解同构的 dict, 或 None(理论上不会)。"""
+    min_cut = max(group.min_cut_length, 1)
+    kerf = group.blade_margin
+    sq = defaultdict(int)
+    for st in group.stocks:
+        sq[st.length] += st.quantity
+    stock = [[L, sq[L]] for L in sorted(sq, reverse=True)]
+    pipes = group.pipes
+    queue = []  # [type_idx, 剩余待填]
+    for i, p in enumerate(pipes):
+        for _ in range(p.demand):
+            queue.append([i, p.length])
+    queue.sort(key=lambda x: -x[1])
+    weld_patterns = defaultdict(int)
+    cut_patterns = defaultdict(int)
+    joints = 0
+    used_len = 0
+    pi = 0
+    cur_segs = []  # 当前管已焊上的段序列
+    cur_type = None
+    for L, qty in stock:
+        for _ in range(qty):
+            if pi >= len(queue):
+                break
+            pos = 0
+            segs = []
+            first = True
+            while pi < len(queue) and pos < L:
+                rem_bar = L - pos - (0 if first else kerf)
+                if rem_bar < min_cut:
+                    break
+                if cur_type is None:
+                    cur_type = queue[pi][0]
+                need = queue[pi][1]
+                cut = min(need, rem_bar)
+                if cut < min_cut:
+                    break
+                if not first:
+                    pos += kerf
+                segs.append(cut)
+                pos += cut
+                first = False
+                cur_segs.append(cut)
+                queue[pi][1] -= cut
+                if queue[pi][1] <= 0:
+                    weld_patterns[(cur_type, tuple(cur_segs))] += 1
+                    joints += len(cur_segs) - 1
+                    cur_segs = []
+                    cur_type = None
+                    pi += 1
+                else:
+                    break  # 管被母料边界截断, 续接在下一根母料(产生焊口)
+            if segs:
+                cut_patterns[(L, tuple(sorted(segs)))] += 1
+                used_len += L
+    if pi < len(queue) or cur_segs:
+        return None  # 库存不足以排下所有管(理论上前置分类已挡住 infeasible)
+    seg_used = set()
+    for (i, seq) in weld_patterns:
+        seg_used.update(seq)
+    util = group.demand_length / used_len if used_len else 0
+    return {
+        "joints": joints, "cut_types": len(cut_patterns),
+        "weld_types": len(weld_patterns), "seg_types": len(seg_used),
+        "used_len": used_len, "util": util,
+        "cut_patterns": dict(cut_patterns), "weld_patterns": dict(weld_patterns),
+        "solver": "ffd_weld",
+    }
 
 
 def solve_arcflow_cutcg(group, pipe_graphs, seg_sorted, stock_qty, max_stock,
@@ -681,6 +1227,17 @@ def solve_arcflow_cutcg(group, pipe_graphs, seg_sorted, stock_qty, max_stock,
     joint_cap = None  # 上一档得到的焊口 -> 下一档的严格上界(逐档降焊口)。
     remaining = tl
     n_grid = len(grids)
+    # FFD/纯切初始可行解: 每根管=1整段(0 焊口), 段长=管长(必在每档段集内, 见
+    # _grid_seg_set)。极限档(L16/L20)coarse 档 MILP 连一个可行整数解都构造不出
+    # (SCIP 档内 timelimit 无解), 注入这个保底可行解作 warm start, 让每档从'已知
+    # 可行点'出发改进, 而非从零空搜。纯切解本身 weld_patterns 为空, 这里补出显式整段拼法。
+    ffd_warm = None
+    if pure_incumbent is not None and pure_incumbent.get("joints", 1) == 0:
+        wp = {}
+        for i, p in enumerate(pipes):
+            wp[(i, (p.length,))] = p.demand
+        ffd_warm = {"joints": 0, "weld_patterns": wp,
+                    "cut_patterns": pure_incumbent.get("cut_patterns", {})}
     # 时间策略: 未拿到达标解前, 每档是'可行性探路', 密档小额封顶、完整档兜底给足;
     # 一旦某档拿到达标解, 后续档(含完整档)只是'改进尝试'(压更少焊口), 小额封顶——
     # 不值得花全部预算去证明'更少焊口不可行'(那是最优性证明, 完整档常直接超时空耗)。
@@ -714,10 +1271,25 @@ def solve_arcflow_cutcg(group, pipe_graphs, seg_sorted, stock_qty, max_stock,
             share = min(remaining, PROBE_CAP)  # 探路档: 快速探路。
         # 拼层弧须限制在本档段集内, 耦合才闭环。
         sub_graphs = _restrict_pipe_graphs(pipe_graphs, set(seg_grid))
+        # 热启动: 完整兜底档(段集是所有档超集)用当前 best 的拼法作初始解,
+        # 让 SCIP 从已知焊口出发改进(而非 30s 从零空搜, 见 L11)。
+        # 未拿到 best 前, 用 FFD/纯切保底可行解(0 焊口整段拼法)作 warm start,
+        # 让极限档(L16/L20)每档至少有可行点出发, 而非档内空搜 timelimit。
+        # 注意: 热启动时 joint_cap 放宽到 warm 焊口本身(而非 -1), 否则 warm 解
+        # 违反上界被判不可行 -> 热启动失效。目标仍是 min 焊口, 会自动压到更低。
+        if is_final and best is not None:
+            warm = best
+        elif best is None and ffd_warm is not None:
+            warm = ffd_warm
+        else:
+            warm = None
+        jcap = joint_cap
+        if warm is not None and joint_cap is not None:
+            jcap = warm["joints"]
         t0 = time.time()
         res = _solve_int_restricted(
             group, pipes, sub_graphs, seg_grid, stock_qty, max_stock,
-            floor_cap, tl=share, verbose=verbose, joint_cap=joint_cap)
+            floor_cap, tl=share, verbose=verbose, joint_cap=jcap, warm=warm)
         remaining -= time.time() - t0
         if res is None:
             if verbose:
@@ -740,7 +1312,61 @@ def solve_arcflow_cutcg(group, pipe_graphs, seg_sorted, stock_qty, max_stock,
         if verbose:
             print(f"    档{gi}(段{len(seg_grid)}): 焊口={res['joints']} "
                   f"util={res['util']:.4f} 达标={达标}", flush=True)
+    if best is None:
+        # 所有 grid 档 MILP 均无可行整数解(L16/L20: util 硬门槛下 SCIP 档内空搜
+        # timelimit)。回退到带焊 FFD 保底可行解(几何构造, 高利用率), 至少给出方案。
+        ffd = _ffd_weld_incumbent(group)
+        if ffd is None:
+            return None
+        if verbose:
+            print(f"  所有档 MILP 无解 -> 带焊 FFD 兜底: 焊口={ffd['joints']} "
+                  f"util={ffd['util']:.4f} 拼法={ffd['weld_types']} 切法={ffd['cut_types']}",
+                  flush=True)
+        # FFD 段过散 -> 标准段量化 + 种类压缩(词典序压 拼法→切法→段), 修正 FFD 的
+        # 海量花样。段能否近乎无废填满母料决定可行性(L16 母料规整可行, L20 混合母料不可行)。
+        std_tl = 150.0
+        comp = _try_std_compress(group, pipes, stock_qty, ffd, tl=std_tl,
+                                 verbose=verbose)
+        if comp is not None and comp["joints"] <= ffd["joints"] * 3:
+            if verbose:
+                print(f"  标准段压缩成功: 焊口={comp['joints']} 拼法={comp['weld_types']} "
+                      f"切法={comp['cut_types']} 段={comp['seg_types']} util={comp['util']:.4f}",
+                      flush=True)
+            return comp
+        return ffd
+    # ── 种类压缩(拼法→切法→段): 在 best 实际产出的段集上重解, 精确压种类且修复
+    # cutcg '>=' 耦合的段过产(verifier SEGMENT_BALANCE)。段集大/枚举爆炸时自动跳过。 ──
+    comp_tl = max(15.0, min(remaining + 30.0, 60.0))  # remaining 可能<=0, 保证正下限
+    best = _maybe_compress(group, pipes, best, stock_qty, tl=comp_tl, verbose=verbose)
     return best
+
+
+def _maybe_compress(group, pipes, best, stock_qty, tl=60.0, verbose=True, seg_cap=16):
+    """在 best 解产出的段集上跑种类压缩(_compress_types)。段集过大或无改进则返回原解。
+    同时修复段平衡(压缩模型用 == 耦合, 切层产出恰等拼层消耗)。"""
+    if best is None or not best.get("weld_patterns"):
+        return best  # 纯切/无焊: 段本就整管, 无压缩空间
+    seg_set = set()
+    for (L, segs) in best["cut_patterns"]:
+        seg_set.update(segs)
+    for (i, seq) in best["weld_patterns"]:
+        seg_set.update(seq)
+    if len(seg_set) > seg_cap:
+        if verbose:
+            print(f"  种类压缩: 段集={len(seg_set)}>{seg_cap} 过大 -> 跳过(保留原解)", flush=True)
+        return best
+    comp = _compress_types(group, pipes, sorted(seg_set), stock_qty,
+                           best["joints"], best["used_len"], tl=tl, verbose=verbose)
+    if comp is None:
+        return best
+    # 只在词典序(拼法→切法→段)不劣时采纳(焊口/用料已由 cap 约束保证不劣)。
+    better = (comp["weld_types"], comp["cut_types"], comp["seg_types"]) <= (
+        best["weld_types"], best["cut_types"], best["seg_types"])
+    if verbose:
+        print(f"  种类压缩结果: 拼法 {best['weld_types']}->{comp['weld_types']} "
+              f"切法 {best['cut_types']}->{comp['cut_types']} "
+              f"段 {best['seg_types']}->{comp['seg_types']} 采纳={better}", flush=True)
+    return comp if better else best
 
 
 def _restrict_pipe_graphs(pipe_graphs, seg_set):
@@ -762,9 +1388,13 @@ def _restrict_pipe_graphs(pipe_graphs, seg_set):
 
 
 def _solve_int_restricted(group, pipes, pipe_graphs, seg_prod, stock_qty, max_stock,
-                          floor_cap, tl=120.0, verbose=True, joint_cap=None):
+                          floor_cap, tl=120.0, verbose=True, joint_cap=None, warm=None):
     """限定段整数模型: 拼层 arc-flow(已按 producible 过滤) + 切层 arc-flow(仅 seg_prod)。
-    两阶段: Pass1 min 用料(达门槛) -> Pass2 固定用料 min 焊口。切层弧数极小(段仅 ~49)。"""
+    两阶段: Pass1 min 用料(达门槛) -> Pass2 固定用料 min 焊口。切层弧数极小(段仅 ~49)。
+
+    warm: 上一档得到的解(dict, 含 weld_patterns/cut_patterns)。若其所有段/焊点弧
+    都存在于当前(更细)段集的弧集里, 则据此构造 SCIP 初始可行解注入(热启动),
+    让求解器从'已知 J 焊口'出发改进, 而非从零搜索(见 L11: 完整档 30s 空搜)。"""
     from pyscipopt import Model, quicksum, SCIP_PARAMEMPHASIS
     min_wd = group.min_weld_distance
     seg_sorted = sorted(seg_prod)
@@ -887,6 +1517,9 @@ def _solve_int_restricted(group, pipes, pipe_graphs, seg_prod, stock_qty, max_st
         m.addCons(joints <= joint_cap)
     m.setEmphasis(SCIP_PARAMEMPHASIS.FEASIBILITY)
     m.setObjective(joints, "minimize")
+    # ── 热启动: 把上一档解映射到当前(更细)段集的弧流, 注入为初始可行解 ──
+    if warm is not None:
+        _try_warm_start(m, warm, g, f, fseg, used_vars, pipe_graphs, stock_qty, verbose)
     t0 = time.time()
     m.optimize()
     if m.getNSols() == 0:
@@ -899,6 +1532,48 @@ def _solve_int_restricted(group, pipes, pipe_graphs, seg_prod, stock_qty, max_st
               f"util={group.demand_length/uu:.4f} status={m.getStatus()} "
               f"({time.time()-t0:.1f}s)", flush=True)
     return _extract(group, pipes, pipe_graphs, g, f, used_vars, stock_qty, m, verbose, fseg=fseg)
+
+
+def _try_warm_start(m, warm, g, f, fseg, used_vars, pipe_graphs, stock_qty, verbose):
+    """把上一档解(weld_patterns)映射为拼层弧流, 作为部分初始解注入 SCIP。
+
+    只设拼层弧流(焊口结构所在)与 used_vars 上界内的粗估; 切层弧由 SCIP 的
+    completesol 启发式补全(放宽 maxunknownrate=1.0)。映射失败(弧不在当前图)则
+    整体放弃热启动(不影响正确性, 仅退化为冷启动)。"""
+    # 预建每管弧集查找: (a,b)->存在。
+    arc_ok = {}
+    for i, (pts, arcs) in pipe_graphs.items():
+        arc_ok[i] = {(a, b) for (a, b, seg) in arcs}
+    gflow = defaultdict(int)  # (i,(a,b)) -> count
+    for (i, seq), cnt in warm.get("weld_patterns", {}).items():
+        pos = 0
+        ok = True
+        for seg in seq:
+            nb = pos + seg
+            if (pos, nb) not in arc_ok.get(i, ()):  # 焊点弧须存在于当前图
+                ok = False
+                break
+            pos = nb
+        if not ok:
+            if verbose:
+                print("    热启动: 拼法弧不在当前段集图内 -> 放弃热启动", flush=True)
+            return False
+        pos = 0
+        for seg in seq:
+            gflow[(i, (pos, pos + seg))] += cnt
+            pos += seg
+    try:
+        m.setParam("heuristics/completesol/maxunknownrate", 1.0)
+    except Exception:
+        pass
+    sol = m.createPartialSol()
+    for (i, ab), v in gflow.items():
+        m.setSolVal(sol, g[i][ab], float(v))
+    m.addSol(sol)
+    if verbose:
+        print(f"    热启动: 注入拼层弧流 {len(gflow)} 条(上一档 {warm.get('joints')} 焊口)",
+              flush=True)
+    return True
 
 
 def _extract(group, pipes, pipe_graphs, g, f, used_vars, stock_qty, m, verbose, fseg=None):
@@ -1002,6 +1677,11 @@ def main():
     print(f"    拼法种类: {res['weld_types']} vs {lg.get('weld_types')}")
     print(f"    切法种类: {res['cut_types']} vs {lg.get('cut_types')}")
     print(f"    段种类:   {res['seg_types']}")
+    diag = res.get("diagnosis")
+    if diag and diag.get("codes"):
+        print("  ── 诊断 ──")
+        for code, msg in diag["codes"]:
+            print(f"    [{code}] {msg}")
 
 
 if __name__ == "__main__":

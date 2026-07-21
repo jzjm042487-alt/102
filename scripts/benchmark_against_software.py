@@ -133,7 +133,8 @@ def _clean_payload(payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def _run_ours(
-    problem_json: str, time_limit: float, blade_margin: float | None = None
+    problem_json: str, time_limit: float, blade_margin: float | None = None,
+    engine: str = "baseline",
 ) -> dict[str, Any]:
     from app.service import solve_and_verify
 
@@ -142,7 +143,7 @@ def _run_ours(
         # Verification-only override: force the cut kerf without touching the
         # engine's built-in default, so we can measure the kerf's real impact.
         payload["BladeMargin"] = blade_margin
-    result = solve_and_verify(payload, time_limit_seconds=time_limit)
+    result = solve_and_verify(payload, time_limit_seconds=time_limit, engine=engine)
     groups = result.get("groups", [])
     if not groups:
         return {"status": result.get("status"), "error": "no groups"}
@@ -177,10 +178,23 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--limit", type=int, default=20, help="最多对比多少条")
     p.add_argument("--offset", type=int, default=0, help="跳过前 N 条（分片用）")
     p.add_argument(
+        "--max-demand", type=int, default=0,
+        help="只保留总需求根数 <= 此值的组（0=不限；R&CG 适用建议 200）",
+    )
+    p.add_argument(
+        "--min-demand", type=int, default=0,
+        help="只保留总需求根数 >= 此值的组（0=不限）",
+    )
+    p.add_argument(
         "--sample", type=int, default=0, help="从候选集中随机抽样 N 条（0=不抽样，按顺序取）"
     )
     p.add_argument("--seed", type=int, default=42, help="随机抽样种子")
     p.add_argument("--time-limit", type=float, default=30.0)
+    p.add_argument(
+        "--engine",
+        default="baseline",
+        help="选择求解引擎：baseline(默认)/rcg/route3/v4/global",
+    )
     p.add_argument(
         "--blade-margin",
         type=float,
@@ -251,6 +265,26 @@ def _summarize(rows: list[dict[str, Any]]) -> None:
         )
 
 
+def _total_demand(problem_json: str) -> int:
+    """Cheap total pipe-demand estimate from the raw payload (no full parse)."""
+    try:
+        payload = _clean_payload(json.loads(problem_json))
+    except Exception:  # noqa: BLE001
+        return -1
+    pipes = payload.get("Pipe")
+    if not isinstance(pipes, list):
+        return 0
+    total = 0
+    for pipe in pipes:
+        if not isinstance(pipe, dict):
+            continue
+        try:
+            total += int(float(pipe.get("pipe_demand", 0)))
+        except (TypeError, ValueError):
+            continue
+    return total
+
+
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     records = _load_records()
@@ -261,25 +295,47 @@ def main(argv: list[str] | None = None) -> int:
         if r.get("MOMCALCULATESTATUS") in wanted
         and r.get("MOMRESULTJSON") not in (None, "", "\ufffd")
     ]
+    if args.max_demand > 0 or args.min_demand > 0:
+        filtered = []
+        for r in candidates:
+            td = _total_demand(r.get("MOMPROBLEMJSON", ""))
+            if td < 0:
+                continue
+            if args.min_demand > 0 and td < args.min_demand:
+                continue
+            if args.max_demand > 0 and td > args.max_demand:
+                continue
+            filtered.append(r)
+        candidates = filtered
     if args.sample > 0:
         rng = random.Random(args.seed)
         candidates = rng.sample(candidates, min(args.sample, len(candidates)))
     picked = candidates[args.offset : args.offset + args.limit]
 
     print(
-        f"对比 {len(picked)} 条 (status={sorted(wanted)}, "
+        f"对比 {len(picked)} 条 (engine={args.engine}, status={sorted(wanted)}, "
+        f"demand∈[{args.min_demand or 0},{args.max_demand or '∞'}], "
         f"sample={args.sample or '-'}, blade_margin={args.blade_margin if args.blade_margin is not None else '默认'}, "
         f"time_limit={args.time_limit}s)\n"
     )
     if not args.quiet:
         print("spec | 软件util/焊口/拼型/切型 | 我们util/焊口/拼型/切型 | 状态 | 校验")
     rows_out: list[dict[str, Any]] = []
+    progress_path = args.out.with_suffix(".progress.jsonl") if args.out else None
+    if progress_path:
+        progress_path.parent.mkdir(parents=True, exist_ok=True)
+        progress_path.write_text("", encoding="utf-8")
     for i, r in enumerate(picked):
         spec = f'{r.get("MOMMATERIAL","")}/{r.get("MOMOUTSIDEDIAMETER","")}x{r.get("MOMWALLTHICKNESS","")}'
+        # Native-level SCIP crashes kill the whole process; log which group we are
+        # about to solve so the culprit is identifiable from the tail of the log.
+        print(f"  [{i + 1}/{len(picked)}] START no={r.get('MOMPROBLEMNO')} spec={spec}", flush=True)
         sw = _software_metrics(r["MOMRESULTJSON"])
         t0 = time.monotonic()
         try:
-            ours = _run_ours(r["MOMPROBLEMJSON"], args.time_limit, args.blade_margin)
+            ours = _run_ours(
+                r["MOMPROBLEMJSON"], args.time_limit, args.blade_margin, args.engine
+            )
         except Exception as exc:  # noqa: BLE001
             ours = {"status": f"ERROR:{type(exc).__name__}", "error": str(exc)}
         elapsed = time.monotonic() - t0
@@ -302,6 +358,9 @@ def main(argv: list[str] | None = None) -> int:
                 "elapsed_s": round(elapsed, 2),
             }
         )
+        if progress_path:
+            with open(progress_path, "a", encoding="utf-8") as pf:
+                pf.write(json.dumps(rows_out[-1], ensure_ascii=False) + "\n")
 
     _summarize(rows_out)
     if args.out and rows_out:

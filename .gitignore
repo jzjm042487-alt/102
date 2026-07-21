@@ -17,8 +17,6 @@ build/
 data/
 backend/data/
 *.log
-*.jsonl
-DGMOMPTDGMOMGLLXWTFJB.json
 
 # ───── 本地备份（不入库）─────
 _backup/
