@@ -33,6 +33,7 @@ import time
 from typing import Any, Sequence
 
 from .domain import MaterialGroup, PipeDemand
+from .route_c_bp import compress_plan
 from .solver import (
     _CutCandidate,
     _WeldCandidate,
@@ -764,12 +765,20 @@ def _run(group: MaterialGroup, time_limit: float, started: float) -> dict[str, A
     # optimise() call, not Python-side model building over a large column pool,
     # so if too little wall-clock remains we skip rather than overrun the budget
     # (which previously let a 20s budget balloon to ~40s).
+    #
+    # Also carve out a compression reserve: R&CG's coarse pool makes the integer
+    # MILP emit far more distinct cut/weld types than the incumbent, and the
+    # lexicographic compressor (run before emit) is the single biggest lever for
+    # closing that gap.  If the MILP eats the whole budget the compressor has no
+    # time to run.  Cap the reserve so tiny budgets still spend most on the MILP.
     remaining = deadline - time.monotonic()
     if remaining < 1.0:
         _trace(f"bail remaining<1 before ip1: {remaining:.2f}")
         return None
+    compress_reserve = min(remaining * 0.35, time_limit * 0.35)
+    ip_budget = max(1.0, remaining - compress_reserve)
     _trace(f"pools before ip1: stage1={len(stage1)} stage2={len(stage2)} sigma={len(sigma)}")
-    ip = _solve_master(group, stage1, stage2, integer=True, time_limit=remaining)
+    ip = _solve_master(group, stage1, stage2, integer=True, time_limit=ip_budget)
     _trace(f"ip1: {None if ip is None else ip.get('infeasibility')}")
     if ip is None or ip.get("infeasibility", 0.0) > 1e-6:
         # Retry with a phase-I integer solve (accept only if artificials are
@@ -780,7 +789,7 @@ def _run(group: MaterialGroup, time_limit: float, started: float) -> dict[str, A
             return None
         ip = _solve_master(
             group, stage1, stage2, integer=True,
-            time_limit=remaining, phase1=True,
+            time_limit=max(1.0, remaining - compress_reserve), phase1=True,
         )
         _trace(f"ip2(phase1): {None if ip is None else ip.get('infeasibility')}")
         if ip is None or ip.get("infeasibility", 0.0) > 1e-6:
@@ -832,6 +841,36 @@ def _run(group: MaterialGroup, time_limit: float, started: float) -> dict[str, A
     if not _must_use_respected(group, cut_counts):
         _trace("bail must-use not respected")
         return None
+
+    # Compress pattern variety before emitting.  R&CG assembles its plan from a
+    # coarse column pool, so it typically uses far more distinct cut/weld types
+    # (and joints) than the incumbent -- the single biggest quality gap in the
+    # benchmark.  The lexicographic compressor rebuilds a tiny MILP on the
+    # produced segment set and minimises types while pinning material and joints
+    # so quality never regresses.  Skip silently when it cannot improve or the
+    # remaining budget is too small (the raw plan is already verified-feasible).
+    compress_budget = deadline - time.monotonic()
+    try:
+        stock_qty: dict[int, int] = {}
+        for st in group.stocks:
+            stock_qty[st.length] = stock_qty.get(st.length, 0) + st.quantity
+        compressed = compress_plan(
+            group,
+            list(group.pipes),
+            stock_qty,
+            group.blade_margin,
+            group.kerf_mode,
+            weld_counts,
+            cut_counts,
+            compress_budget,
+        )
+    except Exception as exc:  # noqa: BLE001 -- compression must never break emit
+        _trace(f"compress raised: {exc}")
+        compressed = None
+    if compressed is not None:
+        c_weld, c_cut = compressed
+        if _must_use_respected(group, c_cut):
+            weld_counts, cut_counts = c_weld, c_cut
 
     result = _assemble_group_result(
         group, "SCIP-RCG", "RCG", weld_counts, cut_counts,

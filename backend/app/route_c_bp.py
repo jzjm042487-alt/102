@@ -25,17 +25,28 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import replace
 import os as _os
+from pathlib import Path
+import sys
 import time
 from typing import Any
 
 from .domain import MaterialGroup, PipeDemand
 from .solver import _CutCandidate, _WeldCandidate, _legal_pattern
 
+# scripts/ hosts the exact lexicographic type-compression MILP (Pass3/4/5) used
+# by the arc-flow engine.  It is not a backend package, so put both the project
+# root and scripts/ on the path -- same shim route_v4_arcflow.py uses.
+_PROJECT_ROOT = Path(__file__).resolve().parents[2]
+for _p in (str(_PROJECT_ROOT), str(_PROJECT_ROOT / "scripts")):
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
+
 # ---------------------------------------------------------------------------
 # Tuning knobs.
 # ---------------------------------------------------------------------------
 MAX_JOINTS_CAP = 13              # hard ceiling on joints per tube in the fallback
 MIN_WELD_SEG = 500               # shortest welded segment the shop allows (mm)
+SHORT_TUBE_JOINTS = 2            # joint budget for tubes that fit a single bar
 ENUM_BUDGET = 40_000             # DFS node budget for legal-sequence enumeration
 SEQS_PER_PIPE = 24               # legal sequences injected per gap tube per round
 RC_EPS = 1e-6
@@ -90,37 +101,83 @@ def _derive_alphabet(group: MaterialGroup) -> list[int]:
                 if min_seg <= r <= max_seg:
                     segs.add(r)
                 k += 1
-    # ③ splice complement: pipe - offcut (so offcuts pair back into a tube)
-    base = set(segs)
-    for pl in pipe_lens:
-        for r in base:
-            d = pl - r
-            if min_seg <= d <= max_seg:
-                segs.add(d)
+    # ③ splice complement: pipe - offcut (so offcuts pair back into a tube).
+    #   This complement cascade densifies the alphabet with many closely-spaced
+    #   fragments.  It is only worth its cost when a tube must be spliced from
+    #   several bars; for a plain 1D cutting group it merely tempts pricing into
+    #   shattered mixed cuts (152 produced segments on a 4-pipe group), which
+    #   makes the coupled integer MILP infeasible and starves compression.
+    needs_splice = any(pl > max(stock_lens) for pl in pipe_lens)
+    if needs_splice:
+        base = set(segs)
+        for pl in pipe_lens:
+            for r in base:
+                d = pl - r
+                if min_seg <= d <= max_seg:
+                    segs.add(d)
+    else:
+        # Pure 1D cutting group.  When demand fits entirely in whole tubes there
+        # is nothing to splice and ①② already cover every useful segment.  When
+        # demand *exceeds* the whole-tube capacity of the stock (so some tubes
+        # must be split to pack the offcuts), add a *regular* grid of split
+        # points -- the same structure the incumbent uses (splits on min-weld
+        # multiples), which keeps the alphabet small and integer-friendly rather
+        # than the fragment cascade.  Cap the grid so the alphabet stays lean.
+        whole_cap = 0
+        for length, qty in ((s.length, s.quantity) for s in group.stocks):
+            best = 0
+            for pl in pipe_lens:
+                k = 0
+                cap = length
+                while cap >= pl:
+                    cap -= pl + (group.blade_margin if k else 0)
+                    k += 1
+                best = max(best, k)
+            whole_cap += best * qty
+        if whole_cap < sum(p.demand for p in group.pipes):
+            grid = max(min_seg, group.min_weld_distance or min_seg)
+            for pl in pipe_lens:
+                pos = grid
+                while pos < pl:
+                    for seg in (pos, pl - pos):
+                        if min_seg <= seg <= max_seg:
+                            segs.add(seg)
+                    pos += grid
     # ④ integer multiples of an offcut (several offcuts welded into one segment)
-    for r in list(segs):
-        for k in (2, 3):
-            if min_seg <= r * k <= max_seg:
-                segs.add(r * k)
-    # ⑤ pairwise sums of small offcuts (extra coverage for tight groups where
-    #    a bar packs two dissimilar tails).  This enlarges the segment alphabet
-    #    -- and thus the LP row count -- noticeably, so it is only worth enabling
-    #    when the base alphabet is still small; on big groups it just slows the
-    #    master without unlocking any missing pattern.
-    if len(segs) <= 60:
-        smalls = sorted(s for s in segs if s <= max_seg // 2)[:40]
-        for i, a in enumerate(smalls):
-            for b in smalls[i:]:
-                t = a + b
-                if min_seg <= t <= max_seg:
-                    segs.add(t)
+    # ⑤ pairwise sums of small offcuts.
+    # Both densify the alphabet with many closely-spaced small segments.  They
+    # are only needed when a tube must be spliced from several bars (pipe >
+    # longest bar); for a plain 1D cutting group (every tube fits one bar) they
+    # merely tempt pricing into shattered mixed cuts that explode the produced
+    # segment set and the downstream cut-pattern enumerator.  Enable the densifi-
+    # cation only when at least one tube genuinely needs splicing.
+    if needs_splice:
+        for r in list(segs):
+            for k in (2, 3):
+                if min_seg <= r * k <= max_seg:
+                    segs.add(r * k)
+        if len(segs) <= 60:
+            smalls = sorted(s for s in segs if s <= max_seg // 2)[:40]
+            for i, a in enumerate(smalls):
+                for b in smalls[i:]:
+                    t = a + b
+                    if min_seg <= t <= max_seg:
+                        segs.add(t)
     # ⑥ ultra-long tubes (pipe > longest bar): the splice must break at a *legal*
     #    weld position, so sample those positions and add both flanks.  Enabled
     #    only for small-demand groups: the sweep enriches the alphabet enough to
     #    unlock tight splices (57x8/45x12), but on large-demand groups the extra
     #    rows blow up the master LP and starve column generation of solve time.
+    #
+    #    Guard against alphabet explosion: a group with many *near-identical*
+    #    long pipes (e.g. 10 tubes of 11280-11322mm) would otherwise contribute
+    #    ten near-duplicate sweeps and hundreds of segments differing by a few
+    #    mm, making per-round pricing take seconds and starving the final ILP.
+    #    Quantise the swept flanks to a coarse grid so clustered pipes collapse
+    #    onto shared segments, keeping the alphabet small and pricing fast.
     total_demand = sum(p.demand for p in group.pipes)
     if total_demand <= 120:
+        grid = max(min_seg, group.min_weld_distance or min_seg)
         for pipe in group.pipes:
             pl = pipe.length
             if pl <= max(stock_lens):
@@ -141,6 +198,41 @@ def _derive_alphabet(group: MaterialGroup) -> list[int]:
                 for seg in (cut, pl - cut):
                     if min_seg <= seg <= max_seg and seg <= max(stock_lens):
                         segs.add(seg)
+    # Cap the alphabet.  Pricing enumerates legal sequences over this set for
+    # every pipe each round; an unbounded set (749 on a 10-pipe splice cluster)
+    # makes a single round take seconds.  Keep whole-bar segments and real
+    # splice tails (the structurally meaningful ones) and thin the rest onto a
+    # coarse grid so the set stays lean without losing splice reachability.
+    ALPHA_CAP = 160
+    if len(segs) > ALPHA_CAP:
+        keep: set[int] = set()
+        # whole-bar and pipe lengths are always meaningful
+        for length in stock_lens:
+            if min_seg <= length <= max_seg:
+                keep.add(length)
+        # real splice tails: pipe - k*bar (the segment a spliced tube needs
+        # beyond whole bars) -- these unlock the tight splices
+        for pl in pipe_lens:
+            for length in stock_lens:
+                k = 1
+                while k * length < pl:
+                    r = pl - k * length
+                    if min_seg <= r <= max_seg:
+                        keep.add(r)
+                    k += 1
+        # thin the remainder onto a coarse grid, preferring larger segments
+        grid = max(min_seg, group.min_weld_distance or min_seg)
+        rest = sorted((s for s in segs if s not in keep), reverse=True)
+        seen_cell: set[int] = set()
+        for s in rest:
+            if len(keep) >= ALPHA_CAP:
+                break
+            cell = s // grid
+            if cell in seen_cell:
+                continue
+            seen_cell.add(cell)
+            keep.add(s)
+        segs = keep
     return sorted(s for s in segs if s >= min_seg)
 
 
@@ -182,7 +274,7 @@ def _enum_legal_seqs(
 
 
 def _cut_knapsack(
-    length: int, pi: dict[int, float], kerf: int = 0
+    length: int, pi: dict[int, float], kerf: int = 0, max_parts: int | None = None
 ) -> tuple[float, dict[int, int]]:
     """Unbounded knapsack: max Σ pi[s]·n_s s.t. Σ n_s·s + (n-1)·kerf <= length.
 
@@ -190,32 +282,67 @@ def _cut_knapsack(
     that separates it, matching ``_CutCandidate.used``.  Modelled by charging
     ``s + kerf`` per part against a capacity of ``length + kerf`` (so the first
     part gets its kerf refunded), keeping the DP one-dimensional.
+
+    ``max_parts`` caps how many segments a single bar may be cut into.  Without
+    it the value-maximising DP happily shatters a 12100mm bar into 15 tiny grid
+    segments, which keeps the produced segment set irregular and makes the
+    downstream type-compressor explode.  Bounding parts (2D DP over capacity x
+    part-count) keeps every generated cut column as regular as the incumbent's.
     """
     cand = sorted(s for s in pi if 0 < s <= length and pi[s] > 1e-9)
     if not cand:
         return 0.0, {}
     cap_max = length + kerf
-    dp = [0.0] * (cap_max + 1)
-    pick = [-1] * (cap_max + 1)
-    for cap in range(1, cap_max + 1):
-        bv, bs = dp[cap - 1], -1
-        for s in cand:
-            cost = s + kerf
-            if cost <= cap:
-                v = pi[s] + dp[cap - cost]
-                if v > bv:
-                    bv, bs = v, s
-        dp[cap], pick[cap] = bv, bs
-    counts: dict[int, int] = defaultdict(int)
-    cap = cap_max
-    while cap > 0:
-        s = pick[cap]
+    if max_parts is None:
+        dp = [0.0] * (cap_max + 1)
+        pick = [-1] * (cap_max + 1)
+        for cap in range(1, cap_max + 1):
+            bv, bs = dp[cap - 1], -1
+            for s in cand:
+                cost = s + kerf
+                if cost <= cap:
+                    v = pi[s] + dp[cap - cost]
+                    if v > bv:
+                        bv, bs = v, s
+            dp[cap], pick[cap] = bv, bs
+        counts: dict[int, int] = defaultdict(int)
+        cap = cap_max
+        while cap > 0:
+            s = pick[cap]
+            if s < 0:
+                cap -= 1
+                continue
+            counts[s] += 1
+            cap -= s + kerf
+        return dp[cap_max], dict(counts)
+
+    # Bounded-parts variant: dp[p][cap] = best value using exactly-<=p parts.
+    neg = float("-inf")
+    dp2 = [[0.0] * (cap_max + 1) for _ in range(max_parts + 1)]
+    pk2 = [[-1] * (cap_max + 1) for _ in range(max_parts + 1)]
+    for p in range(1, max_parts + 1):
+        for cap in range(1, cap_max + 1):
+            bv, bs = dp2[p][cap - 1], -1
+            for s in cand:
+                cost = s + kerf
+                if cost <= cap:
+                    prev = dp2[p - 1][cap - cost]
+                    if prev > neg:
+                        v = pi[s] + prev
+                        if v > bv:
+                            bv, bs = v, s
+            dp2[p][cap], pk2[p][cap] = bv, bs
+    counts = defaultdict(int)
+    p, cap = max_parts, cap_max
+    while cap > 0 and p > 0:
+        s = pk2[p][cap]
         if s < 0:
             cap -= 1
             continue
         counts[s] += 1
         cap -= s + kerf
-    return dp[cap_max], dict(counts)
+        p -= 1
+    return dp2[max_parts][cap_max], dict(counts)
 
 
 # ---------------------------------------------------------------------------
@@ -223,16 +350,34 @@ def _cut_knapsack(
 # ---------------------------------------------------------------------------
 class _BranchAndPrice:
     def __init__(self, group: MaterialGroup, time_limit: float, started: float):
-        # Relax per-tube joints to a geometric ceiling for the fallback only.
+        # Relax per-tube joints to a geometric ceiling -- but keep the relaxation
+        # proportional to what the tube actually needs.  A tube that must be
+        # spliced (``length`` exceeds the longest bar) gets the full geometric
+        # budget; a tube that fits a single bar only gets a *small* budget
+        # (``SHORT_TUBE_JOINTS``).  The incumbent splices a 5173mm tube into 2-3
+        # segments, never 9 -- giving short tubes the full geometric ceiling only
+        # tempts pricing into shattering them, exploding the produced segment set
+        # and the joint count while never improving material.
+        max_stock = max(s.length for s in group.stocks)
         pipes = []
         for p in group.pipes:
-            geom = max(1, p.length // MIN_WELD_SEG - 1)
-            pipes.append(replace(p, max_joints=min(MAX_JOINTS_CAP, max(p.max_joints, geom))))
+            if p.length > max_stock:
+                geom = max(1, p.length // MIN_WELD_SEG - 1)
+                cap = min(MAX_JOINTS_CAP, max(p.max_joints, geom))
+            else:
+                cap = min(MAX_JOINTS_CAP, max(p.max_joints, SHORT_TUBE_JOINTS))
+            pipes.append(replace(p, max_joints=cap))
         self.g = replace(group, pipes=tuple(pipes))
         self.pipes = self.g.pipes
         self.time_limit = time_limit
         self.started = started
         self.deadline = started + time_limit
+        # The lexicographic type compressor is the single biggest quality lever
+        # (joints/cut/weld variety all drop to incumbent parity), so reserve half
+        # the budget for it.  Column generation and the feasibility ILP run
+        # against the earlier ``solve_deadline``; compression uses the full one.
+        self.compress_reserve = time_limit * 0.5
+        self.solve_deadline = self.deadline - self.compress_reserve
         self.min_wd = group.min_weld_distance
         self.min_cut = group.min_cut_length
         self.kerf = group.blade_margin
@@ -242,6 +387,7 @@ class _BranchAndPrice:
         self.stock_qty: dict[int, int] = defaultdict(int)
         for st in group.stocks:
             self.stock_qty[st.length] += st.quantity
+        self.stock_qty_total = sum(self.stock_qty.values())
         self.alphabet = _derive_alphabet(self.g)
         self.cut_cols: list[tuple[int, dict[int, int]]] = []
         self.weld_cols: list[tuple[int, tuple[int, ...]]] = []
@@ -249,6 +395,10 @@ class _BranchAndPrice:
 
     def _time_left(self) -> float:
         return self.deadline - time.monotonic()
+
+    def _time_left_solve(self) -> float:
+        """Budget left before the compression reserve kicks in."""
+        return self.solve_deadline - time.monotonic()
 
     def _seed(self) -> None:
         # Seed each tube with its most compact legal splice, then single-segment
@@ -265,6 +415,47 @@ class _BranchAndPrice:
             for s in sorted(segs):
                 if 0 < s <= length:
                     self.cut_cols.append((length, {s: 1}))
+        self._seed_whole()
+
+    def _seed_whole(self) -> None:
+        """Inject the incumbent's Precut skeleton: whole tubes cut whole.
+
+        The dominant reason our plans fragment is that the LP optimum at a razor
+        margin mixes offcut splices even for tubes that fit a bar whole.  The
+        incumbent instead keeps every tube it can whole (a 5295mm tube stays one
+        segment, packed 2-per-bar) and only splices the residual demand that no
+        whole-tube packing can absorb.  We hand the model exactly that structure:
+        a zero-joint weld column ``(length,)`` per fitting tube, plus cut columns
+        that pack as many *whole* tubes (of one or mixed types) into each bar as
+        the kerf allows.  The joint-minimising stage then naturally prefers these
+        over splices, collapsing joints and the produced segment set.
+        """
+        fit = [(i, p) for i, p in enumerate(self.pipes) if p.length <= self.max_stock]
+        for i, p in fit:
+            col = (i, (p.length,))
+            if col not in self.weld_cols and _legal_pattern(
+                p, (p.length,), self.min_wd, self.min_cut
+            ):
+                self.weld_cols.append(col)
+        tube_lens = sorted({p.length for _, p in fit}, reverse=True)
+        for length in self.stock_qty:
+            # Greedy whole-tube packings of this bar: repeatedly place the
+            # longest tube that still fits (accounting for kerf between parts),
+            # then also every single-type packing (k copies of one tube length).
+            for start in tube_lens:
+                counts: dict[int, int] = {}
+                cap = length
+                first = True
+                order = [start] + [t for t in tube_lens if t != start]
+                for t in order:
+                    while (t + (0 if first else self.kerf)) <= cap:
+                        counts[t] = counts.get(t, 0) + 1
+                        cap -= t + (0 if first else self.kerf)
+                        first = False
+                if counts and not any(
+                    c2 == counts and l2 == length for (l2, c2) in self.cut_cols
+                ):
+                    self.cut_cols.append((length, counts))
 
     def _all_segs(self) -> list[int]:
         s: set[int] = set()
@@ -328,9 +519,19 @@ class _BranchAndPrice:
                                     self.max_stock)
             existing = {w[1] for w in self.weld_cols if w[0] == i}
 
+            # Balance injection between dual value and segment count.  Pure
+            # value-first fills the pool with many-segment shatter patterns
+            # (343+ joints); pure count-first collapses joints but explodes the
+            # produced segment set (every tube picks a *different* 2-segment
+            # split).  The incumbent does neither: it reuses a handful of splits
+            # and keeps whole tubes whole.  Rounding the dual value into coarse
+            # buckets lets segment count break ties within a value tier, so
+            # whole/short sequences win among near-equal columns without chasing
+            # a unique split per tube.
             def score(seq: tuple[int, ...]) -> tuple:
                 val = sum(pi.get(s, 0.0) for s in seq)
-                return (-val, len(seq), -min(seq))
+                bucket = -round(val / max(1.0, self.max_stock * 0.05))
+                return (bucket, len(seq), -val, -min(seq))
 
             seqs.sort(key=score)
             for seq in seqs[:SEQS_PER_PIPE]:
@@ -370,8 +571,16 @@ class _BranchAndPrice:
 
     def _column_generation(self) -> tuple[float, float] | None:
         for it in range(200):
-            if self._time_left() < 2.0:
-                _trace(f"cg bail time @it{it}")
+            # Reserve a firm slice for the final integer solve.  Pricing on a
+            # splice group's dense alphabet can take several seconds per round,
+            # so a 2.0s guard is not enough -- the loop could enter one more
+            # expensive ``_price`` and blow the whole budget, leaving the final
+            # ILP with negative time (BP then returns None and the caller falls
+            # back to the far worse baseline plan).  Bail while enough remains
+            # for ``_final_ilp`` to build and solve.
+            ilp_reserve = max(3.0, self.time_limit * 0.15)
+            if self._time_left() < ilp_reserve:
+                _trace(f"cg bail time @it{it} (reserve {ilp_reserve:.1f})")
                 break
             res = self._solve_lp()
             if res is None:
@@ -382,15 +591,27 @@ class _BranchAndPrice:
                    f"cols(cut={len(self.cut_cols)},weld={len(self.weld_cols)})")
             # Once the demand gap is closed and utilisation meets target we have a
             # usable solution.  Keep polishing utilisation while budget is ample,
-            # but stop as soon as the remaining time drops to the reserve we need
-            # for the final integer solve -- otherwise large groups (196-demand
-            # ultra-long tubes) spend all their budget in the LP and never reach
-            # the ILP, while small groups keep improving util harmlessly.
+            # but stop as soon as the remaining solve time drops to the reserve we
+            # need for the final integer solve -- the compression reserve is
+            # already carved out of ``_time_left_solve``.
+            # Once the demand gap is closed and utilisation meets target we have
+            # a usable LP relaxation -- stop immediately.  Polishing utilisation
+            # past the target only pumps more shatter columns into the pool
+            # (weld count creeps up round after round) and burns the budget the
+            # integer solve and the type compressor need.  A single confirming
+            # round guards against a fluke gap read; then we bail with the pool
+            # as lean as it will ever be.  But if the next pricing round would
+            # eat the reserve, take the target hit immediately -- a solved LP in
+            # hand beats a confirmation round we cannot afford.
             if gap <= RC_EPS and util >= self.target - 1e-6:
-                reserve = max(3.0, self.time_limit * 0.4)
-                if self._time_left() <= reserve:
-                    _trace(f"cg early-stop @it{it}: gap=0 util={util:.4f} (reserve)")
+                self._target_hits = getattr(self, "_target_hits", 0) + 1
+                tight = self._time_left_solve() < 2 * ilp_reserve
+                if self._target_hits >= 2 or tight:
+                    _trace(f"cg stop @it{it}: gap=0 util={util:.4f} "
+                           f"(target met, tight={tight})")
                     return gap, used_len
+            else:
+                self._target_hits = 0
             added = self._price(pi, mu, gap)
             if added == 0:
                 _trace(f"cg converge @it{it}: gap={gap:.2f}")
@@ -401,7 +622,7 @@ class _BranchAndPrice:
         return res[0], res[1]
 
     def _final_ilp(self):
-        from pyscipopt import Model, quicksum
+        from pyscipopt import Model, quicksum, SCIP_PARAMEMPHASIS
 
         remaining = self._time_left()
         if remaining < 1.0:
@@ -409,6 +630,12 @@ class _BranchAndPrice:
         m = Model("bp_final")
         m.hideOutput()
         m.setParam("limits/time", remaining)
+        # The pool is large (hundreds of shatter columns) and strict segment
+        # balance + exact demand make a *feasible* integer point hard to hit.
+        # Bias SCIP toward finding feasibility fast rather than proving the LP
+        # bound; without this the min-material objective can time out with zero
+        # solutions on the messy razor-margin groups (200-demand 38.1x6).
+        m.setEmphasis(SCIP_PARAMEMPHASIS.FEASIBILITY)
         nC, nW, nP = len(self.cut_cols), len(self.weld_cols), len(self.pipes)
         segs = self._all_segs()
         x = {c: m.addVar(vtype="I", lb=0) for c in range(nC)}
@@ -434,13 +661,19 @@ class _BranchAndPrice:
                 m.addCons(quicksum(cols) <= self.stock_qty[length])
         used_len = quicksum(self.cut_cols[c][0] * x[c] for c in range(nC))
         joints = quicksum((len(self.weld_cols[p][1]) - 1) * y[p] for p in range(nW))
-        # Lexicographic: min material, then min joints.
+        # Stage 1: minimise material.
         m.setObjective(used_len, "minimize")
         m.optimize()
         if m.getNSols() == 0:
             return None
         u_star = m.getObjVal()
-        remaining = self._time_left()
+        _trace(f"final ilp1 solved: used={u_star:.0f}")
+        # Stage 2: lock material, minimise joints.  Pattern-type variety is *not*
+        # optimised here -- the coarse column pool is full of shatter patterns and
+        # adding 0/1 indicators here just blows the model up.  Instead we hand the
+        # feasible plan to the arc-flow lexicographic compressor below, which
+        # rebuilds a tiny model on the produced segment set.
+        remaining = self._time_left_solve()
         if remaining >= 1.0:
             m.freeTransform()
             m.setParam("limits/time", remaining)
@@ -464,7 +697,33 @@ class _BranchAndPrice:
                 cut_counts.append(
                     (_CutCandidate(length, parts, self.kerf, self.kerf_mode), n)
                 )
-        return weld_counts, cut_counts
+        compressed = self._compress(weld_counts, cut_counts)
+        return compressed if compressed is not None else (weld_counts, cut_counts)
+
+    def _compress(
+        self,
+        weld_counts: list[tuple[_WeldCandidate, int]],
+        cut_counts: list[tuple[_CutCandidate, int]],
+    ) -> tuple[list, list] | None:
+        """Shrink cut/weld pattern variety without hurting material or joints.
+
+        The B&P column pool is full of shatter patterns, so the feasible plan
+        typically uses far more distinct cut/weld types than the incumbent.  We
+        reuse the arc-flow lexicographic compressor: it rebuilds a tiny全列式
+        MILP on the *produced segment set* (usually <=16 lengths) and minimises
+        weld-types -> cut-types -> seg-types while pinning ``joints`` and
+        ``used_len`` to the incumbent plan (so quality never regresses).
+        """
+        return compress_plan(
+            self.g,
+            self.pipes,
+            self.stock_qty,
+            self.kerf,
+            self.kerf_mode,
+            weld_counts,
+            cut_counts,
+            self._time_left(),
+        )
 
     def solve(self):
         cg = self._column_generation()
@@ -475,7 +734,117 @@ class _BranchAndPrice:
         if gap > 1e-6:
             _trace(f"gap not closed: {gap:.2f}")
             return None
+        _trace(f"entering final_ilp, time_left={self._time_left():.1f}")
         return self._final_ilp()
+
+
+def compress_plan(
+    group: MaterialGroup,
+    pipes: list,
+    stock_qty: dict[int, int],
+    kerf: float,
+    kerf_mode: Any,
+    weld_counts: list[tuple[_WeldCandidate, int]],
+    cut_counts: list[tuple[_CutCandidate, int]],
+    time_budget: float,
+) -> tuple[list, list] | None:
+    """Shrink cut/weld pattern variety without hurting material or joints.
+
+    Both the B&P fallback and the R&CG main engine assemble patterns from a
+    coarse column pool, so their feasible plans use far more distinct cut/weld
+    types (and joints) than the incumbent.  Rebuild a tiny全列式 MILP on the
+    *produced segment set* (usually <=28 lengths) and minimise weld-types ->
+    cut-types -> seg-types -> joints while pinning ``joints`` and ``used_len``
+    to the input plan, so quality can only improve.  Returns the compressed
+    ``(weld_counts, cut_counts)`` or ``None`` when compression is skipped.
+    """
+    if time_budget < 3.0:
+        return None
+    try:
+        from _arcflow_v3 import _compress_types
+    except Exception as exc:  # noqa: BLE001
+        _trace(f"compress import failed: {exc}")
+        return None
+
+    seg_set: set[int] = set()
+    j_cap = 0
+    u_cap = 0
+    max_parts = 1
+    for cand, n in cut_counts:
+        for s in cand.parts:
+            seg_set.add(s)
+        u_cap += cand.stock_length * n
+    for cand, n in weld_counts:
+        for s in cand.parts:
+            seg_set.add(s)
+        j_cap += (len(cand.parts) - 1) * n
+        max_parts = max(max_parts, len(cand.parts))
+    if not seg_set:
+        return None
+    # The cut-pattern enumerator is combinatorial in the segment count: a
+    # 12-length set yields ~5k cut columns, a 15-length set explodes past
+    # 500k on unbounded parts.  Bounding parts to what the plan uses keeps a
+    # 20-length set inside the column guard; only give up when the set is so
+    # rich even bounded enumeration would be pointless.
+    if len(seg_set) > 28:
+        _trace(f"compress skip: seg_set={len(seg_set)} too rich")
+        return None
+    # Cap the compressor's cut-pattern parts to a small constant regardless of
+    # how fragmented the plan's cut columns are: the incumbent never packs more
+    # than ~4-5 functional segments per bar, so a small fixed cap lets the
+    # enumerator rebuild *regular* cut patterns inside the MILP's column guard.
+    cut_cap = min(5, len(seg_set))
+    _trace(f"compress: seg_set={len(seg_set)} cut_cap={cut_cap}")
+
+    # Tighten each tube's joint ceiling to what the plan actually uses (+head
+    # room via max_parts) so the enumerator cannot spawn shatter patterns.
+    comp_pipes = [replace(p, max_joints=min(p.max_joints, max_parts)) for p in pipes]
+    # Split the reserve across the four lexicographic passes (Pass3 types,
+    # Pass4 cut-types, Pass5 seg-types, Pass6 min-joints).  Give Pass4 the
+    # largest slice; retry once if the compressor bails while budget remains
+    # (SCIP's search is non-deterministic so a fresh solve usually clears it).
+    budget = time_budget * 0.85
+    pass_tl = max(4.0, budget * 0.22)
+    cut_pass_tl = max(4.0, budget * 0.34)
+    verbose = bool(_os.environ.get("BP_TRACE"))
+    res = None
+    for attempt in range(2):
+        try:
+            res = _compress_types(
+                group,
+                comp_pipes,
+                seg_set,
+                dict(stock_qty),
+                j_cap=j_cap,
+                u_cap=u_cap,
+                tl=pass_tl,
+                verbose=verbose,
+                cut_tl=cut_pass_tl,
+                cut_max_parts=cut_cap,
+            )
+        except Exception as exc:  # noqa: BLE001
+            _trace(f"compress raised: {exc}")
+            res = None
+        if res and res.get("weld_patterns") and res.get("cut_patterns"):
+            break
+        if attempt == 0 and budget - (pass_tl + cut_pass_tl) < pass_tl + cut_pass_tl:
+            break
+        _trace(f"compress attempt {attempt + 1} empty -> retry")
+    if not res or not res.get("weld_patterns") or not res.get("cut_patterns"):
+        return None
+
+    new_weld: list[tuple[_WeldCandidate, int]] = []
+    for (idx, seq), n in res["weld_patterns"].items():
+        new_weld.append((_WeldCandidate(idx, tuple(seq)), n))
+    new_cut: list[tuple[_CutCandidate, int]] = []
+    for (length, segs), n in res["cut_patterns"].items():
+        new_cut.append((_CutCandidate(length, tuple(segs), kerf, kerf_mode), n))
+    _trace(
+        f"compress: weld_types {len(weld_counts)}->{res.get('weld_types')} "
+        f"cut_types {len(cut_counts)}->{res.get('cut_types')} "
+        f"joints {j_cap}->{res.get('joints')}"
+    )
+    return new_weld, new_cut
 
 
 def solve_bp(

@@ -30,6 +30,11 @@ _refs/
 scripts/_tmp_*.py
 _tmp_*
 *.tmp
+scripts/_regress_*.txt
+scripts/_run20_console.txt
+scripts/_out_*.txt
+scripts/_cg_*.txt
+scripts/_af_*.txt
 
 # ───── IDE / 系统 ─────
 .idea/

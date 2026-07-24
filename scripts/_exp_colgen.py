@@ -78,10 +78,47 @@ def _bar_fill_lengths(P: int, stock_lens: list[int], max_stock: int) -> set[int]
     return lens
 
 
+def _residual_split_lengths(P: int, stock_lens: list[int], max_stock: int,
+                            kerf: int) -> set[int]:
+    """超长管 (P>S) 的少焊口分解段：让每根管拆成"几段整母料 + 一小段残料对齐段"。
+
+    治本 L11/L9/L20 这类"管>最长母料, 必须多段焊接"的档：老软件的少焊口结构是
+      P = a1 + a2 + ... （每段落在某根母料上，段间残料互相塔满）。
+    关键段来自母料边界在管身上的落点：
+      - r = P - k*S（管跨 k 根整母料后的剩余，k=1..ceil(P/minS)）；其互补 S-r。
+      - 让残料 r 与其它管残料两两塔满同一母料：r 与 S⊖r 都要在候选里。
+      - 2/3 等分残料（细化，覆盖 3 段拼法）。
+    仅几十个点/母料，非整百网格爆炸。
+    """
+    lens: set[int] = set()
+    for S in stock_lens:
+        if S <= 0:
+            continue
+        kmax = P // S + 2
+        for k in range(1, kmax + 1):
+            r = P - k * S
+            if 0 < r <= max_stock:
+                lens.add(r)
+                comp = S - r
+                if 0 < comp <= max_stock:
+                    lens.add(comp)
+                for q in (2, 3):
+                    if r % q == 0 and 0 < r // q <= max_stock:
+                        lens.add(r // q)
+            # 母料边界模管身：k*S mod P（母料切满处落在下一根管的位置）
+            m = (k * S) % P
+            if 0 < m <= max_stock:
+                lens.add(m)
+                if 0 < P - m <= max_stock:
+                    lens.add(P - m)
+    return {x for x in lens if 0 < x <= min(P, max_stock)}
+
+
 def candidate_lengths(pipe: PipeDemand, group: MaterialGroup, sigma: set[int]) -> list[int]:
     max_stock = max(s.length for s in group.stocks)
     stock_lens = sorted({s.length for s in group.stocks})
     P = pipe.length
+    kerf = group.blade_margin
     lens: set[int] = set()
 
     # 1) Σ 里可作弧的段（复用优先，pricing 迭代已产出的精确段）
@@ -91,6 +128,10 @@ def candidate_lengths(pipe: PipeDemand, group: MaterialGroup, sigma: set[int]) -
 
     # 2) 母料填充导出段（碎段塔满母料的收尾长度，隐式来自"填满"目标）
     lens |= _bar_fill_lengths(P, stock_lens, max_stock)
+
+    # 2b) 超长管残料对齐段（P>S 时的少焊口分解来源，治本 L11/L9/L20）
+    if P > min(stock_lens, default=max_stock):
+        lens |= _residual_split_lengths(P, stock_lens, max_stock, kerf)
 
     # 3) 管长互补：P ⊖ 已有段（拆管的另一段），两段互补拼成整管
     base = sorted(lens)
@@ -421,6 +462,27 @@ def _counts(parts):
     return d
 
 
+def ffd_weld_seed(group, kerf, max_stock):
+    """用 arcflow 的带焊 FFD 保底解构造 colgen 种子(治本 L9/L11/L20 naive 种子构造失败)。
+
+    FFD 几何构造总能排完(库存足够时), 比 build_feasible_seed 的贪心更稳健。
+    返回与 build_feasible_seed 同构的 dict, 或 None。
+    """
+    from scripts._arcflow_v3 import _ffd_weld_incumbent
+    fw = _ffd_weld_incumbent(group)
+    if fw is None:
+        return None
+    weld = []
+    for (pi_idx, parts), cnt in fw["weld_patterns"].items():
+        for _ in range(cnt):
+            weld.append((pi_idx, tuple(parts)))
+    cut = []
+    for (L, segs), cnt in fw["cut_patterns"].items():
+        for _ in range(cnt):
+            cut.append((L, dict(_counts(segs))))
+    return {"weld": weld, "cut": cut, "used_len": fw["used_len"]}
+
+
 def _fit_seg(pipe, seg, pos, need, min_wd, min_cut, is_first):
     """调整 seg 使焊缝位置 pos+seg 合法且剩余能收尾。返回段长或 None。"""
     lo = max(min_cut if min_cut > 0 else 1, min_wd if not is_first else 1)
@@ -436,7 +498,7 @@ def _fit_seg(pipe, seg, pos, need, min_wd, min_cut, is_first):
     return None
 
 def solve_colgen(group: MaterialGroup, time_limit: float, max_iters: int, verbose=True,
-                 new_seg_penalty: float = 0.0):
+                 new_seg_penalty: float = 0.0, seed=None):
     from pyscipopt import Model, quicksum
 
     max_stock = max(s.length for s in group.stocks)
@@ -462,7 +524,7 @@ def solve_colgen(group: MaterialGroup, time_limit: float, max_iters: int, verbos
         seen_cut.add(key)
         cut_cols.append((L, dict(counts)))
 
-    seed = build_feasible_seed(group, max_stock, kerf, verbose)
+    seed = seed if seed is not None else build_feasible_seed(group, max_stock, kerf, verbose)
     if seed is None:
         if verbose:
             print("  种子构造失败：无法在库存内排完（问题本身可能不可行）")
@@ -650,7 +712,9 @@ def _metrics(group, weld_cols, cut_cols, u, x):
     used_len = sum(cut_cols[ci][0] * round(_val(x[ci])) for ci in used_cut)
     cut_types = len({(cut_cols[ci][0], tuple(sorted(cut_cols[ci][1].items()))) for ci in used_cut})
     weld_types = len({(weld_cols[wi][0], weld_cols[wi][1]) for wi in used_weld})
-    return used_cut, used_weld, used_len, cut_types, weld_types
+    # 焊口数 = Σ 每条启用拼列 (段数-1) * 该列取值(根数)
+    joints = sum((len(weld_cols[wi][1]) - 1) * round(_val(u[wi])) for wi in used_weld)
+    return used_cut, used_weld, used_len, cut_types, weld_types, joints
 
 
 _MODEL_REF = {}
@@ -776,61 +840,162 @@ def _all_split_segs(pipe, group, max_stock):
     return {s for s in segs if 0 < s <= min(P, max_stock)}
 
 
-def solve_integer(group, weld_cols, cut_cols, sigma, kerf, time_limit=60, verbose=True):
-    """两阶段词典序：Phase-1 最小化用料 → Phase-2 固定用料上界、最小化切种类→拼种类。
+def solve_integer(group, weld_cols, cut_cols, sigma, kerf, time_limit=60, verbose=True,
+                  util_floor=None):
+    """词典序整数求解（对齐 SPEC：焊口→拼法→切法→段→利用率，util 仅硬 floor）：
+      Phase-0：全池 min 用料 → 得可达最小用料 used_min（定 util floor 上界）。
+      Phase-1：固定 used_len ≤ used_cap，min 焊口 Σ(段数-1)·u_wi → 得最少焊口 j*。
+      Phase-2：固定 used_len ≤ used_cap 且 焊口 ≤ j*，贪心压缩拼法/切法种类。
 
-    Phase-2 只在 Phase-1 的活跃列上跑（big-M 种类最小化不可套全池，§11.28/11.29）。
+    used_cap = used_min / max(util_floor, used_min硬下界)：允许在利用率不跌破 floor
+    的前提下略放用料，换取更少焊口（焊口是第一目标）。
     """
     bars_by_len = defaultdict(int)
     for s in group.stocks:
         bars_by_len[s.length] += s.quantity
     all_weld = list(range(len(weld_cols)))
     all_cut = list(range(len(cut_cols)))
+    from pyscipopt import quicksum
 
-    # ---- Phase 1：全池最小化用料 ----
+    # ---- Phase 0：全池最小化用料（定 util floor 的用料上界）----
+    m0, u0, x0 = _build_base_int(group, weld_cols, cut_cols, sigma, bars_by_len,
+                                 all_weld, all_cut, time_limit)
+    m0.setObjective(quicksum(cut_cols[ci][0] * x0[ci] for ci in all_cut), "minimize")
+    m0.optimize()
+    if m0.getNSols() == 0:
+        return None
+    used_min = m0.getObjVal()
+    # 用料上界：util 不跌破 floor。floor 缺省用 min用料本身(不放松)。
+    if util_floor is not None and util_floor > 0:
+        used_cap = min(used_min * 1.02, group.demand_length / util_floor)
+        used_cap = max(used_cap, used_min)  # 至少允许 min 用料本身
+    else:
+        used_cap = used_min * 1.001
+
+    # ---- Phase 1：固定用料上界，最小化焊口(主) + 极小拼法种类惩罚(次) ----
+    # 焊口 ≡ 总段数-总管数(等价), 单纯 min 焊口有大量等价最优解, SCIP 常挑
+    # "拼法五花八门"的那个(L11 种类炸 53)。加 big-M 指示 t_w=拼列是否启用,
+    # 目标 min (焊口·W + Σt_w), W 取 >> 拼列数使焊口严格优先, t 仅在焊口打平时
+    # 择种类少者 -> 天然收敛到"少数拼法覆盖全部需求"(对齐老软件少拼法结构)。
     m1, u1, x1 = _build_base_int(group, weld_cols, cut_cols, sigma, bars_by_len,
                                  all_weld, all_cut, time_limit)
-    from pyscipopt import quicksum
-    m1.setObjective(quicksum(cut_cols[ci][0] * x1[ci] for ci in all_cut), "minimize")
+    m1.addCons(quicksum(cut_cols[ci][0] * x1[ci] for ci in all_cut) <= used_cap)
+    t1 = {}
+    total_dem = sum(p.demand for p in group.pipes)
+    for wi in all_weld:
+        t1[wi] = m1.addVar(vtype="B", name=f"t{wi}")
+        m1.addCons(u1[wi] <= total_dem * t1[wi])
+    W = len(all_weld) + 1  # 焊口权重 >> 拼法种类数，保证焊口严格字典序优先
+    m1.setObjective(
+        W * quicksum((len(weld_cols[wi][1]) - 1) * u1[wi] for wi in all_weld)
+        + quicksum(t1[wi] for wi in all_weld), "minimize")
     m1.optimize()
     if m1.getNSols() == 0:
-        return None
-    _MODEL_REF["m"] = m1
-    ucut1, uweld1, used_len1, ct1, wt1 = _metrics(group, weld_cols, cut_cols, u1, x1)
+        # 用料上界太紧 -> 退回 Phase0 解
+        _MODEL_REF["m"] = m0
+        ucut1, uweld1, used_len1, ct1, wt1, jt1 = _metrics(group, weld_cols, cut_cols, u0, x0)
+    else:
+        _MODEL_REF["m"] = m1
+        ucut1, uweld1, used_len1, ct1, wt1, jt1 = _metrics(group, weld_cols, cut_cols, u1, x1)
+    joint_cap = jt1
     if verbose:
-        print(f"  Phase1(最小用料): util={group.demand_length/used_len1:.4f} "
-              f"cut_types={ct1} weld_types={wt1} 活跃列 cut={len(ucut1)} weld={len(uweld1)}")
+        print(f"  Phase0(min用料)={used_min:.0f} cap={used_cap:.0f} | "
+              f"Phase1(min焊口): util={group.demand_length/used_len1:.4f} "
+              f"joints={jt1} cut_types={ct1} weld_types={wt1} "
+              f"活跃列 cut={len(ucut1)} weld={len(uweld1)}")
 
-    # ---- Phase 2：贪心种类压缩（无 big-M，可规模化）----
-    target_len = int(used_len1 * 1.001)  # 允许 0.1% slack 换取更少种类
+    # ---- Phase 2：固定用料上界+焊口上界，贪心压缩种类 ----
+    target_len = int(used_cap)
     con = consolidate_types(group, weld_cols, cut_cols, sigma, target_len,
-                            seed_cut=sorted(ucut1), seed_weld=sorted(uweld1))
+                            seed_cut=sorted(ucut1), seed_weld=sorted(uweld1),
+                            joint_cap=joint_cap)
     if con is None:
+        _uu, _xx = (u1, x1) if m1.getNSols() else (u0, x0)
+        pats1 = _extract_patterns(group, weld_cols, cut_cols, _uu, _xx, all_weld, all_cut)
         return {"cut_types": ct1, "weld_types": wt1, "used_len": used_len1,
-                "util": group.demand_length / used_len1, "phase": 1,
-                "status": str(m1.getStatus())}
+                "joints": jt1, "util": group.demand_length / used_len1, "phase": 1,
+                "status": str(m1.getStatus() if m1.getNSols() else m0.getStatus()),
+                **pats1}
     # 用压缩后的列子集解最终整数解，读取真实指标
     m2, u2, x2 = _build_base_int(group, weld_cols, cut_cols, sigma, bars_by_len,
                                  con["sel_weld"], con["sel_cut"], time_limit)
     m2.addCons(quicksum(cut_cols[ci][0] * x2[ci] for ci in con["sel_cut"]) <= target_len)
-    m2.setObjective(quicksum(cut_cols[ci][0] * x2[ci] for ci in con["sel_cut"]), "minimize")
+    m2.addCons(quicksum((len(weld_cols[wi][1]) - 1) * u2[wi]
+                        for wi in con["sel_weld"]) <= joint_cap)
+    m2.setObjective(quicksum((len(weld_cols[wi][1]) - 1) * u2[wi]
+                             for wi in con["sel_weld"]), "minimize")
     m2.optimize()
     if m2.getNSols() == 0:
+        _MODEL_REF["m"] = m1 if m1.getNSols() else m0
+        _uu, _xx = (u1, x1) if m1.getNSols() else (u0, x0)
+        pats1 = _extract_patterns(group, weld_cols, cut_cols, _uu, _xx, all_weld, all_cut)
         return {"cut_types": ct1, "weld_types": wt1, "used_len": used_len1,
-                "util": group.demand_length / used_len1, "phase": 1,
-                "status": str(m1.getStatus())}
+                "joints": jt1, "util": group.demand_length / used_len1, "phase": 1,
+                "status": str(m1.getStatus() if m1.getNSols() else m0.getStatus()),
+                **pats1}
     _MODEL_REF["m"] = m2
-    ucut2, uweld2, used_len2, ct2, wt2 = _metrics(group, weld_cols, cut_cols, u2, x2)
+    ucut2, uweld2, used_len2, ct2, wt2, jt2 = _metrics(group, weld_cols, cut_cols, u2, x2)
+    pats = _extract_patterns(group, weld_cols, cut_cols, u2, x2, con["sel_weld"], con["sel_cut"])
     return {"cut_types": ct2, "weld_types": wt2, "used_len": used_len2,
-            "util": group.demand_length / used_len2 if used_len2 else 0,
-            "phase": 2, "status": str(m2.getStatus())}
+            "joints": jt2, "util": group.demand_length / used_len2 if used_len2 else 0,
+            "phase": 2, "status": str(m2.getStatus()), **pats}
+
+
+def _extract_patterns(group, weld_cols, cut_cols, u, x, sel_weld, sel_cut):
+    """从已解整数模型读出标准 cut_patterns/weld_patterns/seg_types(对齐 arc-flow 解 dict)。
+
+    weld_patterns: {(type_idx, seg_tuple): count}
+    cut_patterns:  {(stock_len, sorted_seg_tuple): count}
+    """
+    weld_patterns = defaultdict(int)
+    cut_patterns = defaultdict(int)
+    for wi in sel_weld:
+        v = round(_val(u[wi]))
+        if v > 0:
+            pidx, parts = weld_cols[wi]
+            weld_patterns[(pidx, tuple(parts))] += v
+    for ci in sel_cut:
+        v = round(_val(x[ci]))
+        if v > 0:
+            L, counts = cut_cols[ci]
+            segs = []
+            for s, c in counts.items():
+                segs.extend([s] * c)
+            cut_patterns[(L, tuple(sorted(segs)))] += v
+    seg_used = set()
+    for (pidx, seq) in weld_patterns:
+        seg_used.update(seq)
+    return {"cut_patterns": dict(cut_patterns), "weld_patterns": dict(weld_patterns),
+            "seg_types": len(seg_used)}
+
+
+def solve_colgen_full(group, kerf, max_stock, tl=120.0, iters=200, verbose=False,
+                      util_floor=None):
+    """列生成完整管线, 返回与 arc-flow 同构的标准解 dict(含 cut_patterns/weld_patterns)
+    或 None。 供 solve_arcflow 在 FFD 兜底档调用, 真正压少焊口/种类。"""
+    seed = ffd_weld_seed(group, kerf, max_stock)
+    if seed is None:
+        return None
+    out = solve_colgen(group, tl, iters, verbose=verbose, seed=seed)
+    if out is None:
+        return None
+    intr = solve_integer(group, out["weld_cols"], out["cut_cols"], set(out["sigma"]),
+                         kerf, time_limit=min(tl, 120), verbose=verbose,
+                         util_floor=util_floor)
+    if intr is None:
+        return None
+    if "cut_patterns" not in intr:
+        # Phase-1 兜底路径未带 patterns -> 无法产出标准解, 交回上层用 FFD。
+        return None
+    intr["solver"] = "colgen"
+    return intr
 
 
 def consolidate_types(group, weld_cols, cut_cols, sigma, target_len,
-                      seed_cut, seed_weld, time_each=10):
+                      seed_cut, seed_weld, time_each=10, joint_cap=None):
     """种类压缩（无 big-M）：从 Phase-1 活跃列（已知可行）出发，贪心删冗余列。
 
-    每步试删一条列，若剩余仍整数可行（用料≤target_len）则永久删除。
+    每步试删一条列，若剩余仍整数可行（用料≤target_len 且焊口≤joint_cap）则永久删除。
     先删拼列（压拼种类，主目标之一），再删切列。保证不劣于起点。
     """
     from pyscipopt import Model, quicksum
@@ -869,6 +1034,9 @@ def consolidate_types(group, weld_cols, cut_cols, sigma, target_len,
         for L, pl in cbl.items():
             m.addCons(quicksum(x[ci] for ci in pl) <= bars_by_len[L])
         m.addCons(quicksum(cut_cols[ci][0] * x[ci] for ci in sel_cut) <= target_len)
+        if joint_cap is not None:
+            m.addCons(quicksum((len(weld_cols[wi][1]) - 1) * u[wi]
+                               for wi in sel_weld) <= joint_cap)
         m.setObjective(quicksum(cut_cols[ci][0] * x[ci] for ci in sel_cut), "minimize")
         m.optimize()
         return m.getNSols() > 0

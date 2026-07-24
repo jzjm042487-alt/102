@@ -1,7 +1,7 @@
-"""v4 引擎: V3 arc-flow 全局整数模型 + 分类器路由, 接入生产求解路径。
+"""v4 引擎: 生产编排 L0（solve_v4_production）+ 薄适配拼装。
 
-设计见 docs/V3_HANDOFF.md §0.2/§4.7。本模块只做"薄适配":
-  1. 调用 scripts/_arcflow_v3.solve_arcflow(group) 拿到 arc-flow 解;
+设计见 docs/v4-production-implementation-plan.md。本模块只做"薄适配":
+  1. 调用 scripts/solve_v4_production.solve(group) 拿到统一解 dict;
   2. 把它的 weld_patterns / cut_patterns 翻译成 _WeldCandidate / _CutCandidate;
   3. 复用 solver._assemble_group_result 产出与 baseline/route3 同构的结果 dict。
 
@@ -108,11 +108,15 @@ def _reconcile_to_counts(
     return weld_counts, cut_counts
 
 
-def solve_group(group: MaterialGroup, time_limit: float) -> dict[str, Any] | None:
-    """用 v4(arc-flow + 分类器路由)求解一个物料组。
+def solve_group(
+    group: MaterialGroup,
+    time_limit: float,
+    util_floor: float | None = None,
+) -> dict[str, Any] | None:
+    """用 v4 生产编排求解一个物料组。
 
-    返回与 baseline/route3 同构的结果 dict(经 _assemble_group_result), 或 None
-    (不可行/无解/缺 PySCIPOpt/部分解) -> 由调用方回退 baseline。不抛异常, 不改 group。
+    util_floor 未传时用 max(0.95, group.target_rate)。
+    返回与 baseline/route3 同构的结果 dict, 或 None -> 由调用方回退 baseline。
     """
     started = _time.monotonic()
     try:
@@ -120,10 +124,16 @@ def solve_group(group: MaterialGroup, time_limit: float) -> dict[str, Any] | Non
     except Exception:
         return None
 
-    try:
-        from _arcflow_v3 import solve_arcflow
+    if util_floor is None:
+        tr = group.target_rate
+        util_floor = max(0.95, float(tr) if tr is not None else 0.95)
 
-        res = solve_arcflow(group, tl=time_limit, verbose=False)
+    try:
+        from solve_v4_production import solve as solve_v4_production
+
+        res = solve_v4_production(
+            group, tl=time_limit, util_floor=util_floor, verbose=False
+        )
     except Exception:
         return None
     if res is None:
@@ -152,4 +162,13 @@ def solve_group(group: MaterialGroup, time_limit: float) -> dict[str, Any] | Non
         if result["metrics"]["target_reached"]
         else "ARCFLOW_FEASIBLE"
     )
+    result["metrics"]["util_floor"] = util_floor
+    result["metrics"]["solver_path"] = res.get("solver_path")
+    result["metrics"]["v4_solver"] = res.get("solver")
+    if res.get("diagnosis"):
+        warnings = list(result.get("warnings") or [])
+        warnings.append(f"v4_path={res.get('solver_path')}")
+        for d in res["diagnosis"] if isinstance(res["diagnosis"], list) else []:
+            warnings.append(str(d))
+        result["warnings"] = tuple(warnings)
     return result

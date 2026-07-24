@@ -72,6 +72,12 @@ def run_fixed(tl, levels):
         dt = time.time() - t0
         j_v = res["joints"] if res else None
         u_v = res["util"] if res else None
+        # 伪基准档(老软件无解, legacy=null): 只报 V4 自解, 不参与不劣化判定。
+        if lg is None:
+            tag = "无基准(V4自解)" if j_v is not None else "无解/异常"
+            rows.append((f"L{lv}", s["spec"], j_v, u_v, None, None, dt, tag))
+            _print_row(rows[-1])
+            continue
         tag = verdict(j_v, u_v, lg.get("joints"), lg.get("util"))
         rows.append((f"L{lv}", s["spec"], j_v, u_v, lg.get("joints"), lg.get("util"), dt, tag))
         _print_row(rows[-1])
@@ -130,15 +136,18 @@ def _print_row(row):
 
 def _summary(rows):
     print("\n" + "=" * 78)
-    n_ok = n_better = n_reg = 0
+    n_ok = n_better = n_reg = n_nobase = 0
     for *_, tag in rows:
         if tag == "优于":
             n_better += 1
         elif tag == "OK":
             n_ok += 1
+        elif tag.startswith("无基准"):
+            n_nobase += 1
         else:
             n_reg += 1
-    print(f"优于老软件: {n_better}   打平: {n_ok}   回归/异常: {n_reg}   共 {len(rows)} 例")
+    print(f"优于老软件: {n_better}   打平: {n_ok}   回归/异常: {n_reg}   "
+          f"无基准(仅自解): {n_nobase}   共 {len(rows)} 例")
 
 
 def main():

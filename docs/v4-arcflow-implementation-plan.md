@@ -1,10 +1,8 @@
-# V4 (arc-flow) 完整实现方案
+# V4 (arc-flow) 完整实现方案（历史实现稿）
 
-> **定位**：本文件是 V4 求解引擎的**实现规格**，明确到每个算法怎么做、每个阶段解什么、约束如何表达、失败如何归因、做到什么算合格。面向"零上下文接手者"（人或 AI agent）可据此独立实现与验收。
+> **状态更新（2026-07-24）**：本文件不再是实现规格。Arc-Flow 不得作为独立生产路径继续补丁式演进；若本文与 `docs/SPEC.md` 或项目 Skill `production-grade-nesting-solver` 冲突，以后两者为准。
 >
-> **权威依据**：目标函数词典序与硬约束**以 `docs/SPEC.md` 为准**；候选生成规则、分阶段工程化、不可行诊断分类**参照 `docs/research/global-joint-model-spec-v1.md`**；与老软件对标口径参照 `docs/research/cutting-welding-best-practices.md`。三者冲突时以 SPEC + 本文件为准。
->
-> **代码落点**：现状实现 `scripts/_arcflow_v3.py`（core）+ `backend/app/route_v4_arcflow.py`（适配器）。本方案在其上**增量演进**，不推倒重来。
+> **历史定位**：它记录 V4 引擎曾经的实现方式、约束表达和失败归因，仅供回溯及迁移验证过的工艺校验逻辑。
 
 ---
 

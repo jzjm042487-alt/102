@@ -1,7 +1,8 @@
 # 路径乙：Row-and-Column Generation（R&CG）两阶段一体化设计
 
-> 状态：设计草案 / 待实现
+> 状态：耦合架构参考稿；代码原型尚不符合当前生产规格。
 > 目标读者：求解器开发者
+> **权威覆盖（2026-07-24）**：目标顺序必须为 `weld_types → joints → cut_types → util`，且配方激活变量与四阶段锁定不可省略。本文中任何“焊口优先”、加权目标或未带激活变量的表述均为历史设计，不得照搬。
 > 关联文献：Grieco et al. 2024《Algorithmic Advances for 1.5D Two-Stage Cutting Stock Problem》（RSRMP + 行列同时生成）；Zak / Vanderbeck 的多阶段列生成；项目内 `_refs/columngenerationsolver`、`INFORMSJoC/2023.0399`
 > 关联文档：`花样最少化文献导读.md`、`cutting-welding-best-practices.md`、`route-a-decoupled-feedback-design.md`（路径甲）
 
