@@ -1,0 +1,569 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>第1课 · Interval 区间与 contains</title>
+  <style>
+    :root {
+      --bg: #f6f3ee;
+      --ink: #1c1917;
+      --muted: #57534e;
+      --card: #fffdf9;
+      --line: #d6d3d1;
+      --ok: #166534;
+      --ok-bg: #dcfce7;
+      --bad: #9f1239;
+      --bad-bg: #ffe4e6;
+      --accent: #0f766e;
+      --accent-soft: #ccfbf1;
+      --warn: #9a3412;
+      --warn-bg: #ffedd5;
+      --code-bg: #1e1b18;
+      --code-ink: #f5f5f4;
+      --shadow: 0 10px 30px rgba(28, 25, 23, 0.08);
+      --radius: 14px;
+      --font: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+      --mono: "Cascadia Code", "Consolas", "Sarasa Mono SC", monospace;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: var(--font);
+      color: var(--ink);
+      background:
+        radial-gradient(1200px 500px at 10% -10%, #d9f4ef 0%, transparent 55%),
+        radial-gradient(900px 400px at 100% 0%, #fde68a55 0%, transparent 50%),
+        var(--bg);
+      line-height: 1.7;
+    }
+
+    .wrap {
+      max-width: 920px;
+      margin: 0 auto;
+      padding: 32px 20px 80px;
+    }
+
+    header {
+      margin-bottom: 28px;
+    }
+
+    .eyebrow {
+      display: inline-block;
+      color: var(--accent);
+      font-weight: 700;
+      letter-spacing: 0.04em;
+      font-size: 0.85rem;
+      margin-bottom: 8px;
+    }
+
+    h1 {
+      font-size: clamp(1.6rem, 3vw, 2.2rem);
+      line-height: 1.25;
+      margin: 0 0 10px;
+    }
+
+    .lead {
+      color: var(--muted);
+      font-size: 1.05rem;
+      margin: 0;
+      max-width: 46rem;
+    }
+
+    section {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow);
+      padding: 22px 22px 20px;
+      margin: 18px 0;
+    }
+
+    h2 {
+      margin: 0 0 12px;
+      font-size: 1.25rem;
+    }
+
+    h3 {
+      margin: 18px 0 8px;
+      font-size: 1.05rem;
+    }
+
+    p { margin: 0 0 12px; }
+    ul, ol { margin: 0 0 12px; padding-left: 1.3rem; }
+    li { margin: 4px 0; }
+
+    .callout {
+      border-left: 4px solid var(--accent);
+      background: var(--accent-soft);
+      padding: 12px 14px;
+      border-radius: 0 10px 10px 0;
+      margin: 12px 0;
+    }
+
+    .callout.warn {
+      border-left-color: var(--warn);
+      background: var(--warn-bg);
+    }
+
+    .callout.ok {
+      border-left-color: var(--ok);
+      background: var(--ok-bg);
+    }
+
+    code, .mono {
+      font-family: var(--mono);
+      font-size: 0.92em;
+    }
+
+    pre {
+      background: var(--code-bg);
+      color: var(--code-ink);
+      border-radius: 12px;
+      padding: 16px 18px;
+      overflow-x: auto;
+      font-family: var(--mono);
+      font-size: 0.9rem;
+      line-height: 1.55;
+      margin: 12px 0;
+    }
+
+    .kw { color: #93c5fd; }
+    .fn { color: #86efac; }
+    .str { color: #fcd34d; }
+    .num { color: #fda4af; }
+    .cm { color: #a8a29e; }
+
+    .ruler-box {
+      margin-top: 8px;
+      padding: 18px 14px 10px;
+      border: 1px dashed #a8a29e;
+      border-radius: 12px;
+      background: linear-gradient(180deg, #fff 0%, #fafaf9 100%);
+    }
+
+    .ruler {
+      position: relative;
+      height: 54px;
+      margin: 28px 8px 8px;
+      border-radius: 999px;
+      background: linear-gradient(90deg, #e7e5e4 0%, #f5f5f4 100%);
+      border: 1px solid #a8a29e;
+      overflow: hidden;
+    }
+
+    .forbidden {
+      position: absolute;
+      top: 0;
+      bottom: 0;
+      background:
+        repeating-linear-gradient(
+          -45deg,
+          #fb7185,
+          #fb7185 6px,
+          #fda4af 6px,
+          #fda4af 12px
+        );
+      opacity: 0.9;
+    }
+
+    .tick {
+      position: absolute;
+      top: -22px;
+      transform: translateX(-50%);
+      font-size: 0.78rem;
+      color: var(--muted);
+      font-family: var(--mono);
+      white-space: nowrap;
+    }
+
+    .tick::after {
+      content: "";
+      display: block;
+      width: 2px;
+      height: 10px;
+      background: #78716c;
+      margin: 2px auto 0;
+    }
+
+    .pin {
+      position: absolute;
+      top: 8px;
+      width: 14px;
+      height: 14px;
+      border-radius: 50%;
+      border: 2px solid #fff;
+      transform: translateX(-50%);
+      box-shadow: 0 0 0 1px rgba(0,0,0,.15);
+      cursor: pointer;
+    }
+
+    .pin.ok { background: var(--ok); }
+    .pin.bad { background: var(--bad); }
+
+    .legend {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px 18px;
+      margin-top: 10px;
+      font-size: 0.92rem;
+      color: var(--muted);
+    }
+
+    .dot {
+      display: inline-block;
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      margin-right: 6px;
+      vertical-align: middle;
+    }
+
+    .grid-2 {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+
+    @media (max-width: 720px) {
+      .grid-2 { grid-template-columns: 1fr; }
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.95rem;
+      margin: 10px 0;
+    }
+
+    th, td {
+      border: 1px solid var(--line);
+      padding: 8px 10px;
+      text-align: left;
+    }
+
+    th { background: #f5f5f4; }
+
+    .tag {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 0.8rem;
+      font-weight: 700;
+    }
+
+    .tag.ok { background: var(--ok-bg); color: var(--ok); }
+    .tag.bad { background: var(--bad-bg); color: var(--bad); }
+
+    .quiz {
+      display: grid;
+      gap: 10px;
+    }
+
+    .quiz-item {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 12px;
+      background: #fff;
+    }
+
+    .quiz-item button {
+      margin: 4px 6px 0 0;
+      border: 1px solid var(--line);
+      background: #fafaf9;
+      border-radius: 8px;
+      padding: 6px 12px;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    .quiz-item button:hover { border-color: var(--accent); }
+
+    .feedback {
+      margin-top: 8px;
+      min-height: 1.4em;
+      font-size: 0.92rem;
+    }
+
+    .nav-note {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    details {
+      border: 1px solid var(--line);
+      border-radius: 10px;
+      padding: 10px 12px;
+      margin: 8px 0;
+      background: #fff;
+    }
+
+    summary {
+      cursor: pointer;
+      font-weight: 650;
+    }
+
+    footer {
+      margin-top: 24px;
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <div class="eyebrow">排料算法训练 · 第 1 课</div>
+      <h1>Interval：什么是“区间”，contains 在判断什么？</h1>
+      <p class="lead">
+        目标：把这 6 行代码读到“闭着眼睛也能用手算”。
+        本页可反复打开；每次问我，我会在聊天里继续答，并把新内容补进后续课时。
+      </p>
+    </header>
+
+    <section>
+      <h2>1. 先看你的理解（整体正确）</h2>
+      <p>你说的这几句，核心都对：</p>
+      <ul>
+        <li>这是一个<strong>数据类</strong>（专门装数据的小结构）</li>
+        <li><code>start</code> / <code>end</code> 都是整数（毫米）</li>
+        <li><code>contains</code> 返回真/假（布尔值）</li>
+        <li>位置落在开始和结束之间时，在业务上常常表示“落在不可焊区域”</li>
+      </ul>
+
+      <div class="callout warn">
+        <strong>需要微调的两点：</strong>
+        <ol>
+          <li>
+            <code>Interval</code> 自己<strong>不知道</strong>“禁焊”这件事。
+            它只是一个通用尺子刻度区间：从 <code>start</code> 到 <code>end</code>。
+            “不可焊接”是把它放进 <code>PipeDemand.forbidden</code> 之后，业务才赋予的含义。
+          </li>
+          <li>
+            判断用的是 <code>&lt;=</code>，所以是<strong>闭区间</strong>：
+            起点和终点本身也算“在区间内”。
+            例如 <code>Interval(200, 350)</code>，位置 <code>200</code> 和 <code>350</code> 都返回 <code>True</code>。
+          </li>
+        </ol>
+      </div>
+    </section>
+
+    <section>
+      <h2>2. 一行一行拆开读</h2>
+<pre><span class="cm"># 装饰器：告诉 Python “请按数据类方式生成这个类”</span>
+<span class="kw">@dataclass</span>(frozen=<span class="kw">True</span>, slots=<span class="kw">True</span>, order=<span class="kw">True</span>)
+<span class="kw">class</span> <span class="fn">Interval</span>:
+    start: <span class="fn">int</span>   <span class="cm"># 区间起点（毫米）</span>
+    end: <span class="fn">int</span>     <span class="cm"># 区间终点（毫米）</span>
+
+    <span class="kw">def</span> <span class="fn">contains</span>(self, position: <span class="fn">int</span>) -&gt; <span class="fn">bool</span>:
+        <span class="kw">return</span> self.start &lt;= position &lt;= self.end
+</pre>
+
+      <div class="grid-2">
+        <div>
+          <h3><code>@dataclass</code> 是干什么的？</h3>
+          <p>
+            普通类要手写一堆样板代码（初始化、打印、比较）。
+            加上 <code>@dataclass</code> 后，Python 自动帮你生成：
+          </p>
+          <ul>
+            <li>创建对象：<code>Interval(200, 350)</code></li>
+            <li>读取字段：<code>i.start</code>、<code>i.end</code></li>
+            <li>（可选）比较、冻结等能力</li>
+          </ul>
+        </div>
+        <div>
+          <h3>三个参数各是什么意思？</h3>
+          <ul>
+            <li><code>frozen=True</code>：创建后不能改，像“印好的刻度尺”</li>
+            <li><code>slots=True</code>：省内存、防乱加字段（工程优化）</li>
+            <li><code>order=True</code>：可以比较大小（先比 start，再比 end）</li>
+          </ul>
+          <div class="callout">
+            第一课先记住：<strong>frozen = 不可变</strong>。
+            slots/order 以后用到再深挖。
+          </div>
+        </div>
+      </div>
+
+      <h3><code>contains</code> 在算什么？</h3>
+      <p>把这行翻译成人话：</p>
+<pre>self.start &lt;= position &lt;= self.end
+
+意思：
+起点 ≤ 位置  并且  位置 ≤ 终点
+</pre>
+      <p>所以它只回答一个问题：</p>
+      <div class="callout ok">
+        <strong>“这个位置落在这个区间里吗？”</strong><br />
+        不回答“能不能焊”。能不能焊要看外面怎么用这个结果。
+      </div>
+    </section>
+
+    <section>
+      <h2>3. 尺子图：闭区间长什么样</h2>
+      <p>假设禁焊区是 <code>Interval(200, 350)</code>，整根管子从 0 到 1000：</p>
+
+      <div class="ruler-box">
+        <div class="ruler" id="ruler">
+          <div class="forbidden" style="left:20%; width:15%;"></div>
+          <span class="tick" style="left:0%">0</span>
+          <span class="tick" style="left:20%">200</span>
+          <span class="tick" style="left:35%">350</span>
+          <span class="tick" style="left:50%">500</span>
+          <span class="tick" style="left:100%">1000</span>
+
+          <span class="pin bad" style="left:0%" title="0"></span>
+          <span class="pin bad" style="left:20%" title="200"></span>
+          <span class="pin bad" style="left:27.5%" title="275"></span>
+          <span class="pin bad" style="left:35%" title="350"></span>
+          <span class="pin ok" style="left:50%" title="500"></span>
+          <span class="pin bad" style="left:100%" title="1000"></span>
+        </div>
+        <div class="legend">
+          <span><span class="dot" style="background:#fb7185"></span>斜纹区 = Interval(200,350)</span>
+          <span><span class="dot" style="background:#166534"></span>绿点 = contains 为 False（不在这个区间）</span>
+          <span><span class="dot" style="background:#9f1239"></span>红点 = contains 为 True，或端点特殊规则另算</span>
+        </div>
+        <p class="nav-note" style="margin-top:8px">
+          注意：上图红点里的 0 和 1000，对 <code>contains(Interval)</code> 来说其实是 False；
+          它们不能焊，是因为后面的 <code>weld_allowed</code> 还有“不能焊在管端”的规则。
+          这正是“Interval 只管区间，不管焊接业务”的例子。
+        </p>
+      </div>
+
+      <table>
+        <thead>
+          <tr>
+            <th>position</th>
+            <th><code>Interval(200,350).contains(position)</code></th>
+            <th>一句话</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr><td>0</td><td><span class="tag ok">False</span></td><td>在区间左边，不在区间内</td></tr>
+          <tr><td>199</td><td><span class="tag ok">False</span></td><td>还没到 200</td></tr>
+          <tr><td>200</td><td><span class="tag bad">True</span></td><td>等于起点，闭区间算进去</td></tr>
+          <tr><td>275</td><td><span class="tag bad">True</span></td><td>在中间</td></tr>
+          <tr><td>350</td><td><span class="tag bad">True</span></td><td>等于终点，闭区间算进去</td></tr>
+          <tr><td>351</td><td><span class="tag ok">False</span></td><td>已经出区间</td></tr>
+          <tr><td>500</td><td><span class="tag ok">False</span></td><td>远在右边</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>4. 和生活类比</h2>
+      <p>把管子想成一条公路，禁焊区想成“施工路段”：</p>
+      <ul>
+        <li><code>Interval(start, end)</code> = 施工路段从几公里到几公里</li>
+        <li><code>contains(position)</code> = 问：“我现在这个里程碑，在不在施工路段里？”</li>
+        <li>施工路段<strong>两端路口也算施工范围</strong>（闭区间）</li>
+      </ul>
+      <div class="callout">
+        以后读到 <code>forbidden: tuple[Interval, ...]</code> 时，
+        把它理解成：这条管子上可能有多段施工路段。
+      </div>
+    </section>
+
+    <section>
+      <h2>5. 互动自测（点一下就出答案）</h2>
+      <p>设定：<code>i = Interval(200, 350)</code>。判断 <code>i.contains(...)</code>：</p>
+      <div class="quiz" id="quiz"></div>
+    </section>
+
+    <section>
+      <h2>6. 常见追问（点开看）</h2>
+
+      <details>
+        <summary>为什么用 int，不用 float？</summary>
+        <p>
+          生产按<strong>整数毫米</strong>。浮点数会有 <code>0.1 + 0.2 != 0.3</code> 这种误差，
+          焊口位置差 1mm 就是工艺错误。所以区间端点用整数。
+        </p>
+      </details>
+
+      <details>
+        <summary><code>start &lt;= position &lt;= end</code> 和 <code>start &lt; position &lt; end</code> 差在哪？</summary>
+        <p>
+          前者是闭区间，两端算进去；后者是开区间，两端不算。
+          本项目选择闭区间，意味着禁焊区边界上也不许焊。
+        </p>
+      </details>
+
+      <details>
+        <summary>那“能不能焊”到底在哪判断？</summary>
+        <p>
+          在 <code>PipeDemand.weld_allowed</code>：
+        </p>
+<pre><span class="kw">def</span> <span class="fn">weld_allowed</span>(self, position: <span class="fn">int</span>) -&gt; <span class="fn">bool</span>:
+    <span class="kw">return</span> <span class="num">0</span> &lt; position &lt; self.length <span class="kw">and</span> <span class="kw">not</span> <span class="fn">any</span>(
+        interval.contains(position) <span class="kw">for</span> interval <span class="kw">in</span> self.forbidden
+    )
+</pre>
+        <p>翻译：</p>
+        <ol>
+          <li>位置必须严格在管子内部（不是 0，也不是管长）</li>
+          <li>不能落在任何一个禁焊区间里</li>
+        </ol>
+      </details>
+
+      <details>
+        <summary>我下次提问可以怎么问？</summary>
+        <ul>
+          <li>“frozen=True 具体影响什么？”</li>
+          <li>“order=True 比较时谁大谁小？”</li>
+          <li>“weld_allowed 里的 any 怎么读？”</li>
+          <li>“给我 3 个手算例子我自己练”</li>
+        </ul>
+      </details>
+    </section>
+
+    <footer>
+      文件位置：<span class="mono">docs/learning/lesson-01-interval.html</span><br />
+      打开方式：资源管理器双击，或在浏览器打开该文件。<br />
+      当前训练层级：L1（强辅导）。下一课默认进入 <code>weld_allowed</code>。
+    </footer>
+  </div>
+
+  <script>
+    const cases = [
+      { pos: 0, answer: false, why: "0 < 200，在区间左侧。" },
+      { pos: 200, answer: true, why: "等于 start，闭区间包含端点。" },
+      { pos: 275, answer: true, why: "200 ≤ 275 ≤ 350，在中间。" },
+      { pos: 350, answer: true, why: "等于 end，闭区间包含端点。" },
+      { pos: 500, answer: false, why: "500 > 350，在区间右侧。" },
+    ];
+
+    const quiz = document.getElementById("quiz");
+    cases.forEach((c, idx) => {
+      const item = document.createElement("div");
+      item.className = "quiz-item";
+      item.innerHTML = `
+        <div><strong>Q${idx + 1}.</strong> <code>Interval(200, 350).contains(${c.pos})</code> ？</div>
+        <div>
+          <button data-v="true">True</button>
+          <button data-v="false">False</button>
+        </div>
+        <div class="feedback"></div>
+      `;
+      item.querySelectorAll("button").forEach((btn) => {
+        btn.addEventListener("click", () => {
+          const chosen = btn.dataset.v === "true";
+          const fb = item.querySelector(".feedback");
+          if (chosen === c.answer) {
+            fb.style.color = "#166534";
+            fb.textContent = "正确。 " + c.why;
+          } else {
+            fb.style.color = "#9f1239";
+            fb.textContent = "再想想。提示：" + c.why;
+          }
+        });
+      });
+      quiz.appendChild(item);
+    });
+  </script>
+</body>
+</html>

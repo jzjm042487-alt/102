@@ -1,0 +1,74 @@
+[
+  {
+    "level": 3,
+    "spec": "SA-213M T92/57x6.5",
+    "ours": {
+      "joints": 0,
+      "weld_types": 0,
+      "cut_types": 1,
+      "util": 0.9955,
+      "solver": "pure_cut"
+    },
+    "legacy": {
+      "joints": 0,
+      "cut_types": 1,
+      "weld_types": 0,
+      "util": 0.9955
+    },
+    "elapsed": 0.1
+  },
+  {
+    "level": 4,
+    "spec": "SA-213T92/45x11",
+    "ours": {
+      "joints": 0,
+      "weld_types": 0,
+      "cut_types": 5,
+      "util": 0.9661016949152542,
+      "solver": "pure_cut"
+    },
+    "legacy": {
+      "joints": 0,
+      "cut_types": 4,
+      "weld_types": 0,
+      "util": 0.9661
+    },
+    "elapsed": 0.0
+  },
+  {
+    "level": 6,
+    "spec": "SA-213TP310HCbN/51x9",
+    "ours": {
+      "joints": 0,
+      "weld_types": 0,
+      "cut_types": 1,
+      "util": 0.997,
+      "solver": "pure_cut"
+    },
+    "legacy": {
+      "joints": 0,
+      "cut_types": 1,
+      "weld_types": 0,
+      "util": 0.997
+    },
+    "elapsed": 0.0
+  },
+  {
+    "level": 8,
+    "spec": "SA-213TP310HCbN/45x9",
+    "ours": {
+      "joints": 51,
+      "weld_types": 1,
+      "cut_types": 5,
+      "util": 0.9964701008148046,
+      "solver": "compress"
+    },
+    "legacy": {
+      "joints": 64,
+      "cut_types": 8,
+      "weld_types": 5,
+      "util": 0.9965
+    },
+    "elapsed": 200.8
+  }
+]

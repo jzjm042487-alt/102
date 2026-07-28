@@ -1,0 +1,360 @@
+[
+  {
+    "idx": 1888,
+    "n_types": 2,
+    "total": 76,
+    "ours": {
+      "joints": 51,
+      "weld_types": 1,
+      "cut_types": 5,
+      "util": 0.9964701008148046,
+      "solver": "compress"
+    },
+    "legacy": {
+      "joints": 57,
+      "util": 0.996470094,
+      "weld_types": 3,
+      "cut_types": 6
+    },
+    "verdict": "优于",
+    "elapsed": 187.6
+  },
+  {
+    "idx": 926,
+    "n_types": 2,
+    "total": 92,
+    "ours": {
+      "joints": 68,
+      "weld_types": 3,
+      "cut_types": 6,
+      "util": 0.9956450779878112,
+      "solver": "compress"
+    },
+    "legacy": {
+      "joints": 83,
+      "util": 0.995645106,
+      "weld_types": 6,
+      "cut_types": 10
+    },
+    "verdict": "优于",
+    "elapsed": 71.1
+  },
+  {
+    "idx": 2612,
+    "n_types": 4,
+    "total": 88,
+    "ours": {
+      "joints": 70,
+      "weld_types": 6,
+      "cut_types": 10,
+      "util": 0.99392,
+      "solver": null
+    },
+    "legacy": {
+      "joints": 70,
+      "util": 0.993920028,
+      "weld_types": 3,
+      "cut_types": 6
+    },
+    "verdict": "拼法劣",
+    "elapsed": 90.9
+  },
+  {
+    "idx": 2149,
+    "n_types": 2,
+    "total": 88,
+    "ours": null,
+    "legacy": {
+      "joints": 104,
+      "util": 0.994097412,
+      "weld_types": 12,
+      "cut_types": 19
+    },
+    "verdict": "无解",
+    "elapsed": 200.0
+  },
+  {
+    "idx": 2203,
+    "n_types": 4,
+    "total": 88,
+    "ours": {
+      "joints": 44,
+      "weld_types": 1,
+      "cut_types": 3,
+      "util": 0.994268656716418,
+      "solver": "compress"
+    },
+    "legacy": {
+      "joints": 44,
+      "util": 0.994268656,
+      "weld_types": 2,
+      "cut_types": 4
+    },
+    "verdict": "优于",
+    "elapsed": 74.9
+  },
+  {
+    "idx": 1613,
+    "n_types": 2,
+    "total": 76,
+    "ours": null,
+    "legacy": {
+      "joints": 48,
+      "util": 0.996017098,
+      "weld_types": 8,
+      "cut_types": 13
+    },
+    "verdict": "无解",
+    "elapsed": 200.0
+  },
+  {
+    "idx": 2318,
+    "n_types": 2,
+    "total": 60,
+    "ours": null,
+    "legacy": {
+      "joints": 60,
+      "util": 0.949999988,
+      "weld_types": 2,
+      "cut_types": 3
+    },
+    "verdict": "无解",
+    "elapsed": 67.6
+  },
+  {
+    "idx": 1297,
+    "n_types": 2,
+    "total": 52,
+    "ours": {
+      "joints": 53,
+      "weld_types": 11,
+      "cut_types": 12,
+      "util": 0.9933799886514091,
+      "solver": null
+    },
+    "legacy": {
+      "joints": 42,
+      "util": 0.99338001,
+      "weld_types": 6,
+      "cut_types": 8
+    },
+    "verdict": "焊口劣",
+    "elapsed": 52.6
+  },
+  {
+    "idx": 1467,
+    "n_types": 2,
+    "total": 76,
+    "ours": null,
+    "legacy": {
+      "joints": 57,
+      "util": 0.996470094,
+      "weld_types": 3,
+      "cut_types": 6
+    },
+    "verdict": "无解",
+    "elapsed": 200.0
+  },
+  {
+    "idx": 2380,
+    "n_types": 2,
+    "total": 76,
+    "ours": {
+      "joints": 87,
+      "weld_types": 4,
+      "cut_types": 7,
+      "util": 0.996088801828273,
+      "solver": "compress"
+    },
+    "legacy": {
+      "joints": 94,
+      "util": 0.996088803,
+      "weld_types": 4,
+      "cut_types": 7
+    },
+    "verdict": "优于",
+    "elapsed": 70.2
+  },
+  {
+    "idx": 1239,
+    "n_types": 2,
+    "total": 76,
+    "ours": null,
+    "legacy": {
+      "joints": 38,
+      "util": 0.991381705,
+      "weld_types": 1,
+      "cut_types": 3
+    },
+    "verdict": "无解",
+    "elapsed": 200.1
+  },
+  {
+    "idx": 2345,
+    "n_types": 2,
+    "total": 60,
+    "ours": null,
+    "legacy": {
+      "joints": 70,
+      "util": 0.997666299,
+      "weld_types": 3,
+      "cut_types": 4
+    },
+    "verdict": "无解",
+    "elapsed": 84.8
+  },
+  {
+    "idx": 1615,
+    "n_types": 2,
+    "total": 92,
+    "ours": {
+      "joints": 66,
+      "weld_types": 3,
+      "cut_types": 5,
+      "util": 0.9926714727085479,
+      "solver": "compress"
+    },
+    "legacy": {
+      "joints": 77,
+      "util": 0.99267149,
+      "weld_types": 4,
+      "cut_types": 7
+    },
+    "verdict": "优于",
+    "elapsed": 80.9
+  },
+  {
+    "idx": 2596,
+    "n_types": 2,
+    "total": 36,
+    "ours": {
+      "joints": 0,
+      "weld_types": 0,
+      "cut_types": 2,
+      "util": 0.997672450275074,
+      "solver": "pure_cut"
+    },
+    "legacy": {
+      "joints": 18,
+      "util": 0.997672439,
+      "weld_types": 1,
+      "cut_types": 2
+    },
+    "verdict": "优于",
+    "elapsed": 1.0
+  },
+  {
+    "idx": 598,
+    "n_types": 2,
+    "total": 66,
+    "ours": {
+      "joints": 0,
+      "weld_types": 0,
+      "cut_types": 3,
+      "util": 0.9903914590747331,
+      "solver": "pure_cut"
+    },
+    "legacy": {
+      "joints": 7,
+      "util": 0.988632321,
+      "weld_types": 3,
+      "cut_types": 8
+    },
+    "verdict": "优于",
+    "elapsed": 1.1
+  },
+  {
+    "idx": 1365,
+    "n_types": 2,
+    "total": 76,
+    "ours": {
+      "joints": 128,
+      "weld_types": 11,
+      "cut_types": 10,
+      "util": 0.9985995686556435,
+      "solver": null
+    },
+    "legacy": {
+      "joints": 114,
+      "util": 0.998599589,
+      "weld_types": 2,
+      "cut_types": 4
+    },
+    "verdict": "焊口劣",
+    "elapsed": 110.8
+  },
+  {
+    "idx": 1503,
+    "n_types": 2,
+    "total": 46,
+    "ours": {
+      "joints": 45,
+      "weld_types": 3,
+      "cut_types": 5,
+      "util": 0.993631669535284,
+      "solver": "compress"
+    },
+    "legacy": {
+      "joints": 19,
+      "util": 0.993631661,
+      "weld_types": 5,
+      "cut_types": 6
+    },
+    "verdict": "焊口劣",
+    "elapsed": 133.7
+  },
+  {
+    "idx": 2201,
+    "n_types": 2,
+    "total": 36,
+    "ours": {
+      "joints": 35,
+      "weld_types": 35,
+      "cut_types": 36,
+      "util": 0.9946210268948655,
+      "solver": "ffd_weld"
+    },
+    "legacy": {
+      "joints": 36,
+      "util": 0.994621038,
+      "weld_types": 5,
+      "cut_types": 8
+    },
+    "verdict": "优于",
+    "elapsed": 183.1
+  },
+  {
+    "idx": 2450,
+    "n_types": 2,
+    "total": 44,
+    "ours": null,
+    "legacy": {
+      "joints": 60,
+      "util": 0.998587608,
+      "weld_types": 10,
+      "cut_types": 10
+    },
+    "verdict": "无解",
+    "elapsed": 200.0
+  },
+  {
+    "idx": 1107,
+    "n_types": 2,
+    "total": 44,
+    "ours": {
+      "joints": 42,
+      "weld_types": 3,
+      "cut_types": 4,
+      "util": 0.9914147909967845,
+      "solver": "compress"
+    },
+    "legacy": {
+      "joints": 34,
+      "util": 0.991414785,
+      "weld_types": 2,
+      "cut_types": 4
+    },
+    "verdict": "焊口劣",
+    "elapsed": 107.1
+  }
+]

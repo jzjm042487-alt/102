@@ -1,0 +1,62 @@
+[
+  {
+    "idx": 1888,
+    "id": "25161939-9a22-490e-9eea-247ee6f9d7b1",
+    "material": "SA-213TP310HCbN",
+    "ours": {
+      "joints": 51,
+      "weld_types": 1,
+      "cut_types": 5,
+      "util": 0.9964701008148046,
+      "solver": "compress"
+    },
+    "legacy": {
+      "joints": 57,
+      "util": 0.996470094,
+      "weld_types": 3,
+      "cut_types": 6
+    },
+    "verdict": "优于",
+    "elapsed": 213.5
+  },
+  {
+    "idx": 926,
+    "id": "6a75d615-35f7-46a6-bc64-417ab237bff9",
+    "material": "SA-213TP310HCbN",
+    "ours": {
+      "joints": 68,
+      "weld_types": 3,
+      "cut_types": 6,
+      "util": 0.9956450779878112,
+      "solver": "compress"
+    },
+    "legacy": {
+      "joints": 83,
+      "util": 0.995645106,
+      "weld_types": 6,
+      "cut_types": 10
+    },
+    "verdict": "优于",
+    "elapsed": 61.1
+  },
+  {
+    "idx": 2612,
+    "id": "f6f1795c-2922-4d9c-90f1-1de886f52372",
+    "material": "SA-213M TP310HCbN",
+    "ours": {
+      "joints": 70,
+      "weld_types": 6,
+      "cut_types": 10,
+      "util": 0.99392,
+      "solver": null
+    },
+    "legacy": {
+      "joints": 70,
+      "util": 0.993920028,
+      "weld_types": 3,
+      "cut_types": 6
+    },
+    "verdict": "拼法劣",
+    "elapsed": 101.2
+  }
+]
