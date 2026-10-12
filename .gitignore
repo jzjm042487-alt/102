@@ -14,9 +14,19 @@ build/
 *.tsbuildinfo
 
 # ───── 运行时数据 / 大文件（勿入库，含业务数据）─────
-data/
-backend/data/
+data/**
+backend/data/**
 *.log
+
+# 教授软件原始输入/结果（对标金标准，允许入库）
+!backend/data/samples/
+!backend/data/samples/README.md
+!backend/data/samples/software-io/
+!backend/data/samples/software-io/req_92de3aca_input.json
+!backend/data/samples/software-io/batch-DGMOM/
+!backend/data/samples/software-io/batch-DGMOM/software_records.json
+!data/input_a598e024.json
+!data/legacy_output_a598e024.json
 
 # ───── 本地备份（不入库）─────
 _backup/

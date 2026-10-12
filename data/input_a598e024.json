@@ -1,0 +1,90 @@
+{
+  "NestParam": {
+    "BladeMargin": "10"
+  },
+  "material": "SA-213T92",
+  "specifications": "φφ54×14",
+  "Target_Util_Rate": "0.992500007",
+  "Comp": "52S211MX",
+  "JobNum": "119096",
+  "Pipe": [
+    {
+      "figure_number": "52S211-2-12",
+      "jlxh": "374",
+      "cube_no": "6",
+      "Com_draw_number": "52S211MX",
+      "Parent_node": "52S211-2-12",
+      "Scr_draw_number": "52S211-2-0",
+      "pipe_length": "8783.70",
+      "pipe_demand": "18",
+      "Max_Weldingjoint_Number": "2000",
+      "Unweldable_Area": [
+        [
+          "0",
+          "150"
+        ],
+        [
+          "1533.91",
+          "1833.91"
+        ],
+        [
+          "4333.91",
+          "4633.91"
+        ],
+        [
+          "8403.51",
+          "8703.51"
+        ],
+        [
+          "8633.7",
+          "8783.7"
+        ]
+      ]
+    },
+    {
+      "figure_number": "52S211-1-26",
+      "jlxh": "175",
+      "cube_no": "6",
+      "Com_draw_number": "52S211MX",
+      "Parent_node": "52S211-1-26",
+      "Scr_draw_number": "52S211-1-0",
+      "pipe_length": "646.00",
+      "pipe_demand": "18",
+      "Max_Weldingjoint_Number": "2000",
+      "Unweldable_Area": [
+        [
+          "0",
+          "150"
+        ],
+        [
+          "120.01",
+          "420.01"
+        ],
+        [
+          "496",
+          "646"
+        ]
+      ]
+    }
+  ],
+  "Stock": [
+    {
+      "stock_length": "8800",
+      "stock_demand": "18",
+      "must_use": "0"
+    },
+    {
+      "stock_length": "652",
+      "stock_demand": "18",
+      "must_use": "0"
+    }
+  ],
+  "Raw_material_price_m": "10",
+  "welding_price_per": "10",
+  "Adjacent_Distance": "150",
+  "Corner_Distance": "100",
+  "Adjacent_Corner_Distance": "500",
+  "Min_Welding_Length": "500",
+  "evaluate_strategy": "1",
+  "id": "a5140ddb-55f9-4e35-bd4a-11169c716ca0"
+}
