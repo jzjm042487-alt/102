@@ -14,39 +14,58 @@ logger = logging.getLogger(__name__)
 def solve_and_verify(
     payload: dict[str, Any], *, time_limit_seconds: float | None = None,
     engine: str = "baseline",
+    checkpoint_path: str | None = None,
 ) -> dict[str, Any]:
     # Imported lazily so the API can expose a useful health response if a native
     # solver dependency is unavailable during deployment.
     from .solver import solve_payload
     from .verifier import verify_solution
 
+    if engine == "stable" and time_limit_seconds is None:
+        from .engine_stable import STABLE_DEFAULT_TIME_LIMIT_SECONDS
+
+        time_limit_seconds = STABLE_DEFAULT_TIME_LIMIT_SECONDS
     result = solve_payload(
         payload,
         time_limit_seconds=time_limit_seconds
         if time_limit_seconds is not None
         else settings.default_time_limit_seconds,
         engine=engine,
+        checkpoint_path=checkpoint_path,
     )
     # The parser defaults the cutting kerf to 0 (field MOM export and the legacy
     # nesting software both plan cut lengths kerf-free) while the verifier's own
     # fallback is 10 mm.  When the payload omits BladeMargin the two disagree and
     # the verifier would recompute kerf/remainder against a kerf the solver never
     # used, so pin the verifier to the same default the solver built with.
-    verify_payload = payload
-    _has_blade = (
-        isinstance(payload.get("NestParam"), dict)
-        and "BladeMargin" in payload["NestParam"]
-    ) or "BladeMargin" in payload
-    if not _has_blade:
-        from .domain import DEFAULT_BLADE_MARGIN_MM
+    # ``stable`` already rewrote the payload (default kerf 5 mm, min weld
+    # ignored, no L/3000 cap). Verify that same payload.
+    if engine == "stable":
+        verify_payload = result.pop("_stable_prepared_payload", payload)
+    else:
+        verify_payload = payload
+        _has_blade = (
+            isinstance(payload.get("NestParam"), dict)
+            and "BladeMargin" in payload["NestParam"]
+        ) or "BladeMargin" in payload
+        if not _has_blade:
+            from .domain import DEFAULT_BLADE_MARGIN_MM
 
-        verify_payload = dict(payload)
-        verify_payload["NestParam"] = {
-            **(payload.get("NestParam") or {}),
-            "BladeMargin": DEFAULT_BLADE_MARGIN_MM,
-        }
+            verify_payload = dict(payload)
+            verify_payload["NestParam"] = {
+                **(payload.get("NestParam") or {}),
+                "BladeMargin": DEFAULT_BLADE_MARGIN_MM,
+            }
     result["verification"] = verify_solution(verify_payload, result)
-    if not result["verification"].get("passed", False):
+    produced_plan = any(
+        group.get("welding_patterns") or group.get("cutting_patterns")
+        for group in result.get("groups", [])
+    )
+    # An unsolved group has no plan to audit. Keep the solver's failure status
+    # (timeout, proved stock gap, input error) instead of calling that a
+    # verification failure. A plan that was returned and then rejected is a
+    # real verification failure.
+    if produced_plan and not result["verification"].get("passed", False):
         result["status"] = "verification_failed"
     return result
 
