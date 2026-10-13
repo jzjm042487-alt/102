@@ -638,14 +638,81 @@ def test_ondemand_budget_is_shared_by_every_group_in_one_case(monkeypatch) -> No
 
 
 def test_full_alphabet_replaces_a_rare_length() -> None:
-    from app.engine_stable_ondemand import _MAX_ALPHABET, _admit, _alphabet
+    from app.engine_stable_ondemand import _MAX_ALPHABET, _TIER, _admit, _alphabet
 
-    menus = [[(1,), (2,), (3,)]]
-    for length in range(4, _MAX_ALPHABET + 1):
-        menus.append([(length,)])
-    assert len(_alphabet(menus)) == _MAX_ALPHABET
-    introduced: set[int] = set()
-    dropped: set[int] = set()
-    assert _admit(menus, 0, (100,), introduced, dropped) is True
-    assert 100 in _alphabet(menus)
-    assert len(_alphabet(menus)) <= _MAX_ALPHABET
+    token = _TIER.set(0)
+    try:
+        menus = [[(1,), (2,), (3,)]]
+        for length in range(4, _MAX_ALPHABET + 1):
+            menus.append([(length,)])
+        assert len(_alphabet(menus)) == _MAX_ALPHABET
+        introduced: set[int] = set()
+        dropped: set[int] = set()
+        assert _admit(menus, 0, (100,), introduced, dropped) is True
+        assert 100 in _alphabet(menus)
+        assert len(_alphabet(menus)) <= _MAX_ALPHABET
+    finally:
+        _TIER.reset(token)
+
+
+def test_alphabet_cap_doubles_from_the_first_tier() -> None:
+    from app.engine_stable_ondemand import (
+        _MAX_ALPHABET,
+        _TIER,
+        _alphabet_cap,
+        _column_cap,
+        _new_lengths,
+    )
+
+    assert _MAX_ALPHABET == 16
+    first = _TIER.set(0)
+    try:
+        assert _alphabet_cap() == 16
+        assert _new_lengths() == 4
+        assert _column_cap() == 12000
+        second = _TIER.set(1)
+        assert _alphabet_cap() == 32
+        assert _new_lengths() == 8
+        assert _column_cap() == 24000
+        _TIER.reset(second)
+        third = _TIER.set(2)
+        assert _alphabet_cap() == 64
+        _TIER.reset(third)
+    finally:
+        _TIER.reset(first)
+
+
+def test_ondemand_expands_until_the_deadline_or_a_larger_tier(monkeypatch) -> None:
+    """An infeasible restricted master must not stop at the first cap.
+
+    The master is stubbed infeasible so this does not depend on a stock
+    pattern. The search has to record a larger alphabet tier, and it has to
+    return well inside a minute when the deadline is only a couple of seconds.
+    """
+
+    import time
+
+    from app.domain import parse_problem
+    from app.engine_stable import _Timeout, prepare_stable_payload
+    from app.engine_stable_ondemand import ondemand_tier_log, solve_group_ondemand
+
+    payload = _flat_group()
+    payload["Stock"] = [{"stock_length": 100, "stock_demand": 2, "must_use": 0}]
+    payload["Pipe"][0]["Max_Weldingjoint_Number"] = 2
+    payload["Pipe"][0]["pipe_demand"] = 3
+    group = parse_problem(prepare_stable_payload(payload)).groups[0]
+
+    def always_infeasible(*_args, **_kwargs):
+        return "infeasible", None, [], []
+
+    monkeypatch.setattr("app.engine_stable_ondemand._solve_master", always_infeasible)
+    started = time.monotonic()
+    try:
+        solve_group_ondemand(group, started + 2.0)
+    except _Timeout:
+        pass
+    elapsed = time.monotonic() - started
+    assert elapsed < 5
+    text = ondemand_tier_log()
+    assert "16@" in text
+    assert "32@" in text

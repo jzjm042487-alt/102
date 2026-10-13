@@ -9,10 +9,12 @@ stock-boundary welds. Pricing then adds a few complement lengths that exact-fill
 a stock with a length already in the alphabet. Three-piece patterns are
 generated only after two-piece pricing adds nothing.
 
-The alphabet, the number of rounds, the patterns per pipe, and the cut-column
-list are capped so a pool of hundreds of segment lengths cannot be enumerated.
-An infeasible restricted master is a gap in that bounded family, not a proof
-that the order is impossible. A hit of the deadline stays unknown.
+The alphabet, the number of new lengths per round, the patterns per pipe, and
+the cut-column list start small and double when the restricted master is
+infeasible. An infeasible restricted master is a reason to enlarge that
+family, not a proof that the order is impossible. The search returns when it
+finds a plan or the deadline is too close for another tier. A hit of the
+deadline stays unknown.
 
 The module does not branch on a case id, a material-group id, or a segment
 length taken from a known order. Must-use stock is not modelled; callers that
@@ -42,17 +44,20 @@ from .solver import _CutCandidate
 _NOTE: contextvars.ContextVar[str] = contextvars.ContextVar(
     "stable_ondemand_note", default=""
 )
+_LOG: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "stable_ondemand_tier_log", default=""
+)
+_TIER: contextvars.ContextVar[int] = contextvars.ContextVar(
+    "stable_ondemand_tier", default=0
+)
 
-# Size limits chosen before the pilot sample was run. They exist so the
-# search cannot expand into an unconstrained fragment pool.
+# First tier. Later tiers double the alphabet. The reservoir stays finite so
+# a group with hundreds of fragment lengths is still not enumerated whole.
 _MAX_ALPHABET = 16
-_MAX_ROUNDS = 5
-_NEW_LENGTHS = 3
+_NEW_LENGTHS = 4
 _MAX_PATTERNS = 16
 _COARSE_STEPS = 4
 _FINE_STEPS = 12
-_COARSE_TWOS = 8
-_FINE_TWOS = 12
 _GRID_RADIUS = 40
 _COMPLEMENT_WINDOW = 1
 _WINDOWS = (1, 8, 40)
@@ -63,14 +68,65 @@ _COLUMN_CAP = 12000
 _MASTER_CAP_SECONDS = 8.0
 _STOP_REMAINING = 0.4
 _MAX_PIECES_ON_BAR = 4
+_POOL_LIMIT = 512
+_LOG_KEEP = 24
+
+
+def _tier() -> int:
+    return max(0, _TIER.get())
+
+
+def _alphabet_cap() -> int:
+    return _MAX_ALPHABET << _tier()
+
+
+def _new_lengths() -> int:
+    table = (_NEW_LENGTHS, 8, 16, 24, 32)
+    tier = _tier()
+    if tier < len(table):
+        return table[tier]
+    return 32 + 8 * (tier - len(table) + 1)
+
+
+def _pattern_cap() -> int:
+    return min(64, _MAX_PATTERNS + 8 * _tier())
+
+
+def _column_cap() -> int:
+    table = (_COLUMN_CAP, 24000, 48000, 80000, 100000)
+    tier = _tier()
+    if tier < len(table):
+        return table[tier]
+    return table[-1]
+
+
+def _pieces_cap() -> int:
+    return min(6, _MAX_PIECES_ON_BAR + _tier() // 2)
+
+
+def _pool_cap() -> int:
+    return min(_POOL_LIMIT, max(64, _alphabet_cap()))
+
+
+def _master_cap() -> float:
+    return min(12.0, _MASTER_CAP_SECONDS + 2.0 * _tier())
+
+
+def _sample_steps() -> int:
+    return 4 + 2 * _tier()
 
 
 def ondemand_note() -> str:
     return _NOTE.get()
 
 
+def ondemand_tier_log() -> str:
+    return _LOG.get()
+
+
 def reset_ondemand_note() -> None:
     _NOTE.set("")
+    _LOG.set("")
 
 
 def mark_ondemand_timeout() -> None:
@@ -81,18 +137,28 @@ def solve_group_ondemand(group: MaterialGroup, deadline: float) -> dict | None:
     """Return one verifier-sized plan, or None if this restriction fails."""
 
     _NOTE.set("")
-    if time.monotonic() >= deadline:
-        _NOTE.set("按需生成时限内未知")
-        raise _Timeout
+    _LOG.set("")
+    _TIER.set(0)
     try:
+        if time.monotonic() >= deadline:
+            _NOTE.set("按需生成时限内未知")
+            _LOG.set("timeout")
+            raise _Timeout
         return _search(group, deadline)
     except _Timeout:
         if not _NOTE.get():
             _NOTE.set("按需生成时限内未知")
+        log = _LOG.get()
+        if log and not log.endswith(":timeout"):
+            _LOG.set(log + ":timeout")
+        elif not log:
+            _LOG.set("timeout")
         raise
     except Exception as exc:
         _NOTE.set(f"按需生成中断：{type(exc).__name__}: {exc}"[:180])
         return None
+    finally:
+        _TIER.set(0)
 
 
 def _search(group: MaterialGroup, deadline: float) -> dict | None:
@@ -108,70 +174,215 @@ def _search(group: MaterialGroup, deadline: float) -> dict | None:
         _NOTE.set("按需生成未运行：环境里没有 ortools")
         return None
 
+    origin = time.monotonic()
+    log: list[str] = []
     fine = _small_group(group)
-    menus = _seed_menus(group, fine=fine)
-    dropped: set[int] = set()
-    introduced: set[int] = set()
-    tried_longer = False
-    window_index = 0
-    for round_index in range(1, _MAX_ROUNDS + 1):
-        _ensure_time(deadline)
-        introduced.clear()
-        _reuse_patterns(group, menus, deadline)
-        covered = all(menus)
-        status, plan = "infeasible", None
-        if covered:
-            status, plan = _solve_master(group, menus, deadline, cp_model)
+    pools = _seed_menus(group, fine=fine)
+    stock_lengths = set(_avail(group))
+    tier = 0
+    idle = 0
+    prev_admitted = 0
+    unknown_streak = 0
+    last_missing = 0
+    try:
+        while True:
+            _TIER.set(tier)
+            _ensure_time(deadline)
+            menus = _limit_alphabet([list(item) for item in pools], stock_lengths)
+            dropped: set[int] = set()
+            window = _WINDOWS[min(tier, len(_WINDOWS) - 1)]
+            before = sum(len(menu) for menu in pools)
+            status, plan, missing = _expand_once(
+                group,
+                menus,
+                pools,
+                deadline,
+                cp_model,
+                window,
+                dropped,
+                stock_lengths,
+            )
+            last_missing = len(missing)
             if plan is not None:
+                _stamp(log, origin, solved=True)
                 _NOTE.set("")
                 return plan
+            if status == "broken":
+                _stamp(log, origin, solved=False)
+                return None
+            admitted = len(_alphabet(menus))
+            after = sum(len(menu) for menu in pools)
+            if after == before and admitted <= prev_admitted:
+                idle += 1
+            else:
+                idle = 0
+            prev_admitted = admitted
             if status == "unknown":
-                menus = _shrink_menus(menus)
-                _ensure_time(deadline)
-                status, plan = _solve_master(group, menus, deadline, cp_model)
-                if plan is not None:
-                    _NOTE.set("")
-                    return plan
+                unknown_streak += 1
+            else:
+                unknown_streak = 0
+            _stamp(log, origin, solved=False)
+            remaining = deadline - time.monotonic()
+            reservoir = len(_alphabet(pools))
+            cap_binding = reservoir >= _alphabet_cap()
+            empty = any(not menu for menu in menus)
+            fine_enough = _sample_steps() >= (80 if empty else 48)
+            if (
+                status == "infeasible"
+                and idle >= 2
+                and not cap_binding
+                and fine_enough
+            ):
+                _NOTE.set(_gap_text(fine, empty, last_missing, reservoir))
+                return None
+            if status == "unknown" and (unknown_streak >= 2 or remaining < 2.0):
+                if remaining >= _STOP_REMAINING:
+                    status, plan, missing, _weak = _solve_master(
+                        group,
+                        menus,
+                        deadline,
+                        cp_model,
+                        slice_cap=max(0.2, remaining - 0.05),
+                    )
+                    last_missing = len(missing)
+                    if plan is not None:
+                        _stamp(log, origin, solved=True)
+                        _NOTE.set("")
+                        return plan
                 if status != "infeasible":
                     _NOTE.set("按需生成时限内未知")
                     raise _Timeout
-        if status == "broken":
-            return None
-        window = _WINDOWS[min(window_index, len(_WINDOWS) - 1)]
-        added = _price_two_pieces(
-            group, menus, deadline, window=window, introduced=introduced, dropped=dropped
+            if remaining < _STOP_REMAINING + 0.35:
+                if status == "unknown":
+                    _NOTE.set("按需生成时限内未知")
+                    raise _Timeout
+                _NOTE.set(_gap_text(fine, empty, last_missing, reservoir))
+                return None
+            tier += 1
+    except _Timeout:
+        if not log or not log[-1].startswith(f"{_alphabet_cap()}@"):
+            _stamp(log, origin, solved=False)
+        raise
+
+
+def _expand_once(
+    group: MaterialGroup,
+    menus: list[list[tuple[int, ...]]],
+    pools: list[list[tuple[int, ...]]],
+    deadline: float,
+    cp_model,
+    window: int,
+    dropped: set[int],
+    stock_lengths: set[int],
+) -> tuple[str, dict | None, list[int]]:
+    """Solve once, price from the witness, then solve the enlarged master."""
+
+    introduced: set[int] = set()
+    _cover_empty_pipes(
+        group, menus, pools, deadline, introduced, dropped, stock_lengths
+    )
+    _reuse_patterns(group, menus, deadline)
+    _sync_pools(pools, menus, stock_lengths)
+    status, plan, missing, weak = "infeasible", None, [], []
+    if all(menus):
+        status, plan, missing, weak = _finish_master(
+            group, menus, deadline, cp_model
         )
-        if not added and not tried_longer:
-            tried_longer = True
-            added = _add_longer_patterns(
-                group, menus, deadline, introduced=introduced, dropped=dropped
-            )
-        if added:
-            continue
-        if window_index + 1 < len(_WINDOWS):
-            window_index += 1
-            continue
-        if any(not menu for menu in menus):
-            _NOTE.set(
-                _gap_text(round_index, fine)
-                + "至少一根管子在段长种类上限内没有合法拼法。"
-            )
-        else:
-            _NOTE.set(_gap_text(round_index, fine))
-        return None
-    _NOTE.set(_gap_text(_MAX_ROUNDS, fine))
-    return None
+        if plan is not None or status in ("broken", "unknown"):
+            return status, plan, missing
+    if missing:
+        _drop_unsourcable(menus, set(missing))
+        dropped.update(missing)
+    introduced = set()
+    focus = _focus_lengths(weak or missing, group)
+    added = _price_two_pieces(
+        group,
+        menus,
+        deadline,
+        window=window,
+        introduced=introduced,
+        dropped=dropped,
+        focus=focus,
+        pools=pools,
+        stock_lengths=stock_lengths,
+    )
+    longer = _add_longer_patterns(
+        group,
+        menus,
+        deadline,
+        introduced=introduced,
+        dropped=dropped,
+        pools=pools,
+        stock_lengths=stock_lengths,
+    )
+    covered = _cover_empty_pipes(
+        group, menus, pools, deadline, introduced, dropped, stock_lengths
+    )
+    _sync_pools(pools, menus, stock_lengths)
+    if (added or longer or covered) and all(menus):
+        status, plan, missing, _weak = _solve_master(
+            group, menus, deadline, cp_model
+        )
+    elif not all(menus):
+        status = "infeasible"
+    return status, plan, missing
 
 
-def _gap_text(rounds: int, fine: bool) -> str:
+def _finish_master(group, menus, deadline: float, cp_model):
+    status, plan, missing, weak = _solve_master(group, menus, deadline, cp_model)
+    if plan is not None or status in ("broken", "infeasible"):
+        return status, plan, missing, weak
+    shrunk = _shrink_menus(menus)
+    _ensure_time(deadline)
+    status, plan, missing, weak = _solve_master(group, shrunk, deadline, cp_model)
+    if plan is not None or status == "broken":
+        return status, plan, missing, weak
+    if deadline - time.monotonic() < 2.0:
+        _NOTE.set("按需生成时限内未知")
+        raise _Timeout
+    # The unshrunk model did not finish. One longer slice of that same
+    # restriction; a failure of the shrunk model is not a proof.
+    return _solve_master(
+        group,
+        menus,
+        deadline,
+        cp_model,
+        slice_cap=min(20.0, max(0.2, deadline - time.monotonic() - 0.05)),
+    )
+
+
+def _stamp(log: list[str], origin: float, *, solved: bool) -> None:
+    elapsed = max(0.0, time.monotonic() - origin)
+    item = f"{_alphabet_cap()}@{elapsed:.2f}"
+    if solved:
+        item += ":solved"
+    if len(log) < _LOG_KEEP:
+        log.append(item)
+    elif log[-1].startswith("+") and not solved:
+        log[-1] = "+" + item
+    else:
+        log.append("+" + item)
+    _LOG.set(",".join(log))
+
+
+def _gap_text(fine: bool, empty: bool, missing: int, reservoir: int) -> str:
     grid = "更密" if fine else "粗"
+    if empty:
+        cover = "仍有管子没有拼法。"
+    else:
+        cover = "每根管子都有拼法，受限主问题仍不可行。"
+    lack = f"最后一档有{missing}种段长没有任何切法。" if missing else ""
+    record = ondemand_tier_log()
+    if len(record) > 160:
+        record = record[:160] + "…"
     return (
-        "按需生成缺口：定价在字母表、轮数和切法列上限内没有再生成能让主问题可行的拼法。"
-        f"限制为段长种类不超过{_MAX_ALPHABET}、最多{_MAX_ROUNDS}轮、"
-        f"每轮最多{_NEW_LENGTHS}种新段长、每管最多{_MAX_PATTERNS}个拼法、"
-        f"切法列不超过{_COLUMN_CAP}，焊口用{grid}离散网格、禁焊区端点外移 1mm "
-        "和定尺互补，不是连续整数位置。字母表已满时替换出现次数最少、且删去后仍给每根管子留下拼法的段长。"
-        f"已完成{rounds}轮。这不是订单不可行的证明。"
+        f"按需生成缺口：字母表从{_MAX_ALPHABET}起逐档翻倍，停在{_alphabet_cap()}，"
+        f"池内不同段长{reservoir}。"
+        f"本档每轮新段长不超过{_new_lengths()}，每管拼法不超过{_pattern_cap()}，"
+        f"切法列不超过{_column_cap()}。{cover}{lack}"
+        f"焊口用{grid}离散网格并随档加密，不是连续整数。"
+        "更低档不可行后已自动放大。这不是订单不可行的证明。"
+        f"档位：{record}。"
     )
 
 
@@ -204,7 +415,6 @@ def _avail(group: MaterialGroup) -> list[int]:
 
 def _seed_menus(group: MaterialGroup, *, fine: bool) -> list[list[tuple[int, ...]]]:
     steps = _FINE_STEPS if fine else _COARSE_STEPS
-    two_cap = _FINE_TWOS if fine else _COARSE_TWOS
     stocks = _avail(group)
     menus: list[list[tuple[int, ...]]] = []
     for pipe in group.pipes:
@@ -236,15 +446,17 @@ def _seed_menus(group: MaterialGroup, *, fine: bool) -> list[list[tuple[int, ...
                 add(_uniform_parts(pipe, group, pieces))
                 for stock in _anchor_stocks(stocks, pipe.length):
                     add(_stock_peel(pipe, group, stock, pieces))
-        menus.append(_keep(found, whole, two_cap, set(stocks)))
-    return _limit_alphabet(menus, set(stocks))
+            for parts in _sample_multi(pipe, group, _sample_steps(), time.monotonic() + 0.05):
+                add(parts)
+        menus.append(_keep(found, whole, set(stocks), _pool_cap()))
+    return menus
 
 
 def _keep(
     found: list[tuple[int, ...]],
     whole: tuple[int, ...] | None,
-    cap: int,
     stock_lengths: set[int],
+    limit: int,
 ) -> list[tuple[int, ...]]:
     """Keep wholes and non-stock welds ahead of stock-boundary welds.
 
@@ -256,7 +468,7 @@ def _keep(
         aligned = sum(1 for part in parts if part in stock_lengths)
         return (aligned, len(parts), parts)
 
-    multis = [parts for parts in found if len(parts) >= 3][:4]
+    multis = [parts for parts in found if len(parts) >= 3][: max(4, limit // 4)]
     ranked = sorted((parts for parts in found if len(parts) < 3), key=sort_key)
     kept: list[tuple[int, ...]] = []
     if whole is not None and whole in found:
@@ -268,9 +480,9 @@ def _keep(
         if parts in kept:
             continue
         kept.append(parts)
-        if len(kept) >= cap:
+        if len(kept) >= limit:
             break
-    return kept[:_MAX_PATTERNS]
+    return kept[:limit]
 
 
 def _grid_welds(
@@ -316,7 +528,7 @@ def _limit_alphabet(
     menus: list[list[tuple[int, ...]]],
     stock_lengths: set[int],
 ) -> list[list[tuple[int, ...]]]:
-    """Keep at most ``_MAX_ALPHABET`` distinct piece lengths.
+    """Keep at most the current tier's alphabet of distinct piece lengths.
 
     A pipe with no pattern is served before a pipe that already has one, and
     a pattern that reuses lengths already chosen is preferred. Otherwise the
@@ -328,13 +540,13 @@ def _limit_alphabet(
     while True:
         best: tuple | None = None
         for pipe_index, menu in enumerate(menus):
-            if len(chosen[pipe_index]) >= _MAX_PATTERNS:
+            if len(chosen[pipe_index]) >= _pattern_cap():
                 continue
             for parts in menu:
                 if parts in chosen[pipe_index]:
                     continue
                 extra = {part for part in parts if part not in used}
-                if len(used) + len(extra) > _MAX_ALPHABET:
+                if len(used) + len(extra) > _alphabet_cap():
                     continue
                 aligned = sum(1 for part in parts if part in stock_lengths)
                 cand = (
@@ -409,12 +621,18 @@ def _reuse_patterns(
         return False
     added = False
     ordered = tuple(sorted(alphabet))
+    if len(ordered) > 48:
+        stride = max(1, len(ordered) // 48)
+        middles = ordered[::stride]
+    else:
+        middles = ordered
+    checks = 0
     for pipe_index, pipe in enumerate(group.pipes):
         _ensure_time(deadline)
         existing = set(menus[pipe_index])
         if pipe.max_joints >= 1:
             for left in ordered:
-                if len(menus[pipe_index]) >= _MAX_PATTERNS:
+                if len(menus[pipe_index]) >= _pattern_cap():
                     break
                 right = pipe.length - left
                 if right not in alphabet or right <= 0:
@@ -427,10 +645,13 @@ def _reuse_patterns(
                 added = True
         if pipe.max_joints < 2:
             continue
-        for left in ordered:
-            if len(menus[pipe_index]) >= _MAX_PATTERNS:
+        for left in middles:
+            if len(menus[pipe_index]) >= _pattern_cap():
                 break
-            for middle in ordered:
+            for middle in middles:
+                checks += 1
+                if checks % 32 == 0:
+                    _ensure_time(deadline)
                 tail = pipe.length - left - middle
                 if tail not in alphabet or tail <= 0:
                     continue
@@ -440,7 +661,7 @@ def _reuse_patterns(
                 menus[pipe_index].append(parts)
                 existing.add(parts)
                 added = True
-                if len(menus[pipe_index]) >= _MAX_PATTERNS:
+                if len(menus[pipe_index]) >= _pattern_cap():
                     break
     return added
 
@@ -508,7 +729,7 @@ def _admit(
 ) -> bool:
     """Add one pattern, dropping rare lengths when the alphabet is full."""
 
-    if parts in menus[pipe_index] or len(menus[pipe_index]) >= _MAX_PATTERNS:
+    if parts in menus[pipe_index] or len(menus[pipe_index]) >= _pattern_cap():
         return False
     alphabet = _alphabet(menus)
     fresh = {part for part in set(parts) if part not in alphabet}
@@ -517,10 +738,10 @@ def _admit(
     new_slots = fresh - introduced
     pipe_empty = not menus[pipe_index]
     if new_slots and not (pipe_empty and not introduced and len(fresh) <= 4):
-        if len(introduced) + len(new_slots) > _NEW_LENGTHS:
+        if len(introduced) + len(new_slots) > _new_lengths():
             return False
-    if len(alphabet) + len(fresh) > _MAX_ALPHABET:
-        need = len(alphabet) + len(fresh) - _MAX_ALPHABET
+    if len(alphabet) + len(fresh) > _alphabet_cap():
+        need = len(alphabet) + len(fresh) - _alphabet_cap()
         victims = _plan_drops(
             menus,
             need,
@@ -531,11 +752,244 @@ def _admit(
             return False
         _apply_drops(menus, victims)
         dropped.update(victims)
-    if parts in menus[pipe_index] or len(menus[pipe_index]) >= _MAX_PATTERNS:
+    if parts in menus[pipe_index] or len(menus[pipe_index]) >= _pattern_cap():
         return False
     menus[pipe_index].append(parts)
     introduced.update(fresh)
     return True
+
+
+def _remember(
+    pools: list[list[tuple[int, ...]]],
+    index: int,
+    parts: tuple[int, ...],
+    stock_lengths: set[int],
+) -> bool:
+    """Keep a rejected pattern so a later, larger tier can admit it."""
+
+    bucket = pools[index]
+    if parts in bucket:
+        return False
+    if len(bucket) < _pool_cap():
+        bucket.append(parts)
+        return True
+    have = {part for menu in pools for cand in menu for part in cand}
+    fresh = [part for part in parts if part not in have]
+    if not fresh:
+        return False
+    for pos, cand in enumerate(bucket):
+        if not set(cand).isdisjoint(fresh):
+            continue
+        if all(part in stock_lengths for part in cand) or set(cand) < have:
+            bucket.pop(pos)
+            bucket.append(parts)
+            return True
+    return False
+
+
+def _sync_pools(
+    pools: list[list[tuple[int, ...]]],
+    menus: list[list[tuple[int, ...]]],
+    stock_lengths: set[int],
+) -> None:
+    for index, menu in enumerate(menus):
+        for parts in menu:
+            _remember(pools, index, parts, stock_lengths)
+
+
+def _drop_unsourcable(
+    menus: list[list[tuple[int, ...]]], missing: set[int]
+) -> bool:
+    """Drop welds whose segment length has no cut on any stock."""
+
+    if not missing:
+        return False
+    changed = False
+    for index, menu in enumerate(menus):
+        kept = [parts for parts in menu if missing.isdisjoint(parts)]
+        if len(kept) != len(menu):
+            menus[index] = kept
+            changed = True
+    return changed
+
+
+def _focus_lengths(weak: list[int], group: MaterialGroup) -> set[int]:
+    """Complements of lengths that still have no exact-fill cut."""
+
+    stocks = _avail(group)
+    kerf = group.blade_margin
+    found: set[int] = set()
+    for length in weak:
+        for stock in stocks:
+            piece = stock - kerf - length
+            if piece > 0:
+                found.add(piece)
+            if len(found) >= 64:
+                return found
+    return found
+
+
+def _cover_empty_pipes(
+    group: MaterialGroup,
+    menus: list[list[tuple[int, ...]]],
+    pools: list[list[tuple[int, ...]]],
+    deadline: float,
+    introduced: set[int],
+    dropped: set[int],
+    stock_lengths: set[int],
+) -> bool:
+    """Patterns for pipes the current alphabet still does not cover."""
+
+    added = False
+    stocks = _avail(group)
+    max_stock = max(stocks) if stocks else 0
+    steps = _sample_steps()
+    for pipe_index, pipe in enumerate(group.pipes):
+        _ensure_time(deadline)
+        if menus[pipe_index]:
+            continue
+        existing = set(menus[pipe_index])
+        candidates: list[tuple[int, ...]] = []
+        if max_stock and pipe.length > max_stock and pipe.max_joints >= 1:
+            need = (pipe.length + max_stock - 1) // max_stock
+            upper = min(pipe.max_joints + 1, need + 1 + _tier(), 8)
+            for pieces in range(max(need, 2), upper + 1):
+                uniform = _uniform_parts(pipe, group, pieces)
+                if uniform is not None:
+                    candidates.append(uniform)
+                for stock in _anchor_stocks(stocks, pipe.length):
+                    peeled = _stock_peel(pipe, group, stock, pieces)
+                    if peeled is not None:
+                        candidates.append(peeled)
+        for parts in _sample_multi(pipe, group, steps, deadline):
+            candidates.append(parts)
+        for parts in candidates:
+            _remember(pools, pipe_index, parts, stock_lengths)
+            if parts in existing:
+                continue
+            if _admit(menus, pipe_index, parts, introduced, dropped):
+                existing.add(parts)
+                added = True
+            if len(menus[pipe_index]) >= _pattern_cap():
+                break
+    return added
+
+
+def _snap_chain(
+    pipe: PipeDemand, group: MaterialGroup, parts: tuple[int, ...]
+) -> tuple[int, ...] | None:
+    if len(parts) < 2:
+        return None
+    max_stock = max(stock.length for stock in group.stocks)
+    margin = _min_part(group, multi=True)
+    positions: list[int] = []
+    cursor = 0
+    for part in parts[:-1]:
+        target = cursor + part
+        lo = max(cursor + margin, target - _GRID_RADIUS)
+        hi = min(pipe.length - margin, cursor + max_stock, target + _GRID_RADIUS)
+        if lo > hi:
+            return None
+        weld = _snap_weld(pipe, target, lo, hi)
+        if weld is None or weld <= cursor:
+            return None
+        positions.append(weld)
+        cursor = weld
+    built: list[int] = []
+    previous = 0
+    for position in positions:
+        built.append(position - previous)
+        previous = position
+    built.append(pipe.length - previous)
+    result = tuple(built)
+    if min(result) <= 0 or max(result) > max_stock:
+        return None
+    return result if _acceptable(pipe, group, result) else None
+
+
+def _sample_multi(
+    pipe: PipeDemand, group: MaterialGroup, steps: int, deadline: float
+) -> list[tuple[int, ...]]:
+    """Discrete multi-piece welds. Each piece stays within one stock.
+
+    The grid gets finer as the tier index grows. Nominal positions are snapped
+    onto the same allowed weld set used everywhere else; this is not a free
+    integer weld.
+    """
+
+    if pipe.max_joints < 2 or steps < 2 or time.monotonic() >= deadline:
+        return []
+    stocks = [stock.length for stock in group.stocks if stock.length > 0 and stock.quantity > 0]
+    if not stocks:
+        return []
+    max_stock = max(stocks)
+    margin = _min_part(group, multi=True)
+    found: list[tuple[int, ...]] = []
+    seen: set[tuple[int, ...]] = set()
+
+    def push(nominal: tuple[int, ...]) -> bool:
+        if time.monotonic() >= deadline or len(found) >= 48:
+            return False
+        snapped = _snap_chain(pipe, group, nominal)
+        if snapped is None or snapped in seen:
+            return True
+        seen.add(snapped)
+        found.append(snapped)
+        return len(found) < 48
+
+    if pipe.max_joints >= 2:
+        low = max(margin, pipe.length - 2 * max_stock)
+        high = min(max_stock, pipe.length - 2 * margin)
+        if low <= high:
+            denom = max(steps - 1, 1)
+            cells = min(16, steps)
+            stride = 1 if steps <= cells else max(1, steps // cells)
+            for i in range(0, steps, stride):
+                if time.monotonic() >= deadline:
+                    return found
+                first = low + (high - low) * i // denom
+                remain = pipe.length - first
+                low2 = max(margin, remain - max_stock)
+                high2 = min(max_stock, remain - margin)
+                if low2 > high2:
+                    continue
+                for j in range(0, steps, stride):
+                    second = low2 + (high2 - low2) * j // denom
+                    third = remain - second
+                    if min(first, second, third) < margin or max(first, second, third) > max_stock:
+                        continue
+                    if not push((first, second, third)):
+                        return found
+    upper = min(pipe.max_joints + 1, 8)
+    need = max(2, (pipe.length + max_stock - 1) // max_stock)
+    for pieces in range(max(need, 4), upper + 1):
+        if time.monotonic() >= deadline or len(found) >= 48:
+            break
+        uniform = _uniform_parts(pipe, group, pieces)
+        if uniform is not None and uniform not in seen:
+            seen.add(uniform)
+            found.append(uniform)
+        low = margin
+        high = min(max_stock, pipe.length - margin * (pieces - 1))
+        if low > high:
+            continue
+        denom = max(min(steps, 12) - 1, 1)
+        for i in range(min(steps, 12)):
+            first = low + (high - low) * i // denom
+            tail = pipe.length - first
+            others = pieces - 1
+            base, extra = divmod(tail, others)
+            if base <= 0:
+                continue
+            nominal_list = [first]
+            for index in range(others):
+                nominal_list.append(base + (1 if index < extra else 0))
+            nominal = tuple(nominal_list)
+            if min(nominal) < margin or max(nominal) > max_stock:
+                continue
+            if not push(nominal):
+                return found
+    return found
 
 
 def _price_two_pieces(
@@ -546,11 +1000,15 @@ def _price_two_pieces(
     window: int,
     introduced: set[int],
     dropped: set[int],
+    focus: set[int] | None = None,
+    pools: list[list[tuple[int, ...]]] | None = None,
+    stock_lengths: set[int] | None = None,
 ) -> bool:
     """Add complement welds after the restricted master is infeasible.
 
-    The witness is that infeasibility. A full alphabet is not a reason to
-    discard the new column: rare lengths are replaced, up to the same cap.
+    The witness is that infeasibility, plus any length that had no exact cut.
+    A full alphabet is not a reason to discard the new column: rare lengths
+    are replaced, up to the current tier's cap.
     """
 
     _ensure_time(deadline)
@@ -558,14 +1016,19 @@ def _price_two_pieces(
     stocks = _avail(group)
     kerf = group.blade_margin
     partners = alphabet or set(stocks)
+    wanted = focus or set()
     scores: Counter[int] = Counter()
     for stock in stocks:
         for partner in partners:
             piece = stock - kerf - partner
             if piece > 0:
                 scores[piece] += 1
+        if len(scores) > 4000:
+            break
+    for piece in wanted:
+        scores[piece] += 5
     shortlist = [piece for piece, _score in scores.most_common(_COMPLEMENT_KEEP)]
-    steps = 4 if window <= 1 else 8 if window <= 8 else 12
+    steps = min(36, _sample_steps() + (0 if window <= 1 else 4 if window <= 8 else 8))
     proposals: list[tuple[int, int, tuple[int, ...]]] = []
     for pipe_index, pipe in enumerate(group.pipes):
         _ensure_time(deadline)
@@ -577,7 +1040,8 @@ def _price_two_pieces(
                 parts = _windowed_two_piece(pipe, group, target, window)
                 if parts is None or parts in existing:
                     continue
-                proposals.append((weight, pipe_index, parts))
+                bonus = 50 if wanted and set(parts) & wanted else 0
+                proposals.append((weight + bonus, pipe_index, parts))
                 existing.add(parts)
         for weld in _grid_welds(pipe, group, stocks, steps):
             parts = _windowed_two_piece(pipe, group, weld, window)
@@ -587,7 +1051,10 @@ def _price_two_pieces(
             existing.add(parts)
     proposals.sort(key=lambda item: (-item[0], item[1], item[2]))
     added = False
+    lengths = stock_lengths if stock_lengths is not None else set(stocks)
     for _score, pipe_index, parts in proposals:
+        if pools is not None:
+            _remember(pools, pipe_index, parts, lengths)
         if _admit(menus, pipe_index, parts, introduced, dropped):
             added = True
     return added
@@ -600,6 +1067,8 @@ def _add_longer_patterns(
     *,
     introduced: set[int],
     dropped: set[int],
+    pools: list[list[tuple[int, ...]]] | None = None,
+    stock_lengths: set[int] | None = None,
 ) -> bool:
     """Three- and four-piece patterns once two-piece pricing has stalled."""
 
@@ -607,15 +1076,27 @@ def _add_longer_patterns(
     stocks = _avail(group)
     kerf = group.blade_margin
     max_stock = max(stocks) if stocks else 0
+    lengths = stock_lengths if stock_lengths is not None else set(stocks)
     for pipe_index, pipe in enumerate(group.pipes):
         _ensure_time(deadline)
-        if pipe.max_joints < 2 or len(menus[pipe_index]) >= _MAX_PATTERNS:
+        if pipe.max_joints < 2:
             continue
         existing = set(menus[pipe_index])
+        for parts in _sample_multi(pipe, group, _sample_steps(), deadline):
+            if pools is not None:
+                _remember(pools, pipe_index, parts, lengths)
+            if parts in existing or len(menus[pipe_index]) >= _pattern_cap():
+                continue
+            if _admit(menus, pipe_index, parts, introduced, dropped):
+                existing.add(parts)
+                added = True
+        if len(menus[pipe_index]) >= _pattern_cap():
+            continue
         piece_counts = [3, 4]
-        if max_stock and pipe.length > 2 * max_stock:
+        if max_stock and pipe.length > max_stock:
             need = (pipe.length + max_stock - 1) // max_stock
-            piece_counts = list(range(need, min(pipe.max_joints + 1, need + 2, 5) + 1))
+            upper = min(pipe.max_joints + 1, need + 1 + _tier(), 8)
+            piece_counts = list(range(max(need, 2), upper + 1))
         for pieces in piece_counts:
             if pieces < 2 or pieces - 1 > pipe.max_joints:
                 continue
@@ -635,12 +1116,12 @@ def _add_longer_patterns(
         alphabet = _alphabet(menus)
         bases = [parts for parts in menus[pipe_index] if len(parts) == 2][:4]
         for base in bases:
-            if len(menus[pipe_index]) >= _MAX_PATTERNS:
+            if len(menus[pipe_index]) >= _pattern_cap():
                 break
             longer = 0 if base[0] >= base[1] else 1
             piece = base[longer]
             targets = [piece // 2]
-            for partner in list(alphabet)[:_MAX_ALPHABET]:
+            for partner in list(alphabet)[:_alphabet_cap()]:
                 for stock in stocks[:_MAX_STOCK_ANCHORS]:
                     complement = stock - kerf - partner
                     if 0 < complement < piece:
@@ -673,28 +1154,34 @@ def _shrink_menus(menus: list[list[tuple[int, ...]]]) -> list[list[tuple[int, ..
         kept = [parts for parts in menu if set(parts) <= allowed]
         if not kept and menu:
             kept = [max(menu, key=lambda parts: sum(freq[part] for part in parts))]
-        shrunk.append(kept[:_MAX_PATTERNS])
+        shrunk.append(kept[: _pattern_cap()])
     return shrunk
 
 
-def _solve_master(group, menus, deadline: float, cp_model):
+def _solve_master(group, menus, deadline: float, cp_model, slice_cap: float | None = None):
     remaining = deadline - time.monotonic()
     if remaining < _STOP_REMAINING:
         _NOTE.set("按需生成时限内未知")
         raise _Timeout
-    slice_seconds = min(_MASTER_CAP_SECONDS, max(0.2, remaining * 0.45), remaining - 0.05)
+    cap = _master_cap() if slice_cap is None else slice_cap
+    slice_seconds = min(cap, remaining - 0.05)
     if slice_seconds < 0.2:
         _NOTE.set("按需生成时限内未知")
         raise _Timeout
     lengths = sorted(_alphabet(menus))
     if not lengths or any(not menu for menu in menus):
-        return "infeasible", None
+        return "infeasible", None, [], []
     stocks = _avail(group)
     kerf = group.blade_margin
     mode = group.kerf_mode
-    patterns = _cut_columns(lengths, stocks, kerf, mode, deadline)
+    shapes = [parts for menu in menus for parts in menu]
+    patterns, supplied, exact_lengths = _cut_columns(
+        lengths, stocks, kerf, mode, deadline, shapes
+    )
+    missing = [length for length in lengths if length not in supplied]
+    weak = [length for length in lengths if length not in exact_lengths]
     if not patterns:
-        return "infeasible", None
+        return "infeasible", None, missing, weak
     model = cp_model.CpModel()
     choice: list[list] = []
     for pipe_index, pipe in enumerate(group.pipes):
@@ -714,15 +1201,22 @@ def _solve_master(group, menus, deadline: float, cp_model):
         avail[stock.length] += max(stock.quantity, 0)
     usage = []
     for index, (stock, _parts) in enumerate(patterns):
+        if index % 2000 == 0 and time.monotonic() >= deadline:
+            _NOTE.set("按需生成时限内未知")
+            raise _Timeout
         usage.append(model.NewIntVar(0, avail[stock], f"c{index}"))
+    produced_terms: dict[int, list] = {length: [] for length in lengths}
+    for index, (variable, (_stock, parts)) in enumerate(zip(usage, patterns)):
+        if index % 2000 == 0 and time.monotonic() >= deadline:
+            _NOTE.set("按需生成时限内未知")
+            raise _Timeout
+        for length, copies in Counter(parts).items():
+            bucket = produced_terms.get(length)
+            if bucket is None:
+                continue
+            bucket.append(variable if copies == 1 else copies * variable)
     for length in lengths:
-        produced = []
-        for variable, (_stock, parts) in zip(usage, patterns):
-            copies = parts.count(length)
-            if copies == 1:
-                produced.append(variable)
-            elif copies > 1:
-                produced.append(copies * variable)
+        produced = produced_terms[length]
         if not produced:
             if demand_terms[length]:
                 model.Add(sum(demand_terms[length]) == 0)
@@ -737,8 +1231,12 @@ def _solve_master(group, menus, deadline: float, cp_model):
         by_stock.setdefault(stock, []).append(variable)
     for stock, terms in by_stock.items():
         model.Add(sum(terms) <= avail[stock])
+    remaining = deadline - time.monotonic()
+    if remaining < 0.2:
+        _NOTE.set("按需生成时限内未知")
+        raise _Timeout
     solver = cp_model.CpSolver()
-    solver.parameters.max_time_in_seconds = slice_seconds
+    solver.parameters.max_time_in_seconds = min(slice_seconds, max(0.2, remaining - 0.05))
     solver.parameters.num_search_workers = 1
     solver.parameters.random_seed = 1
     status = solver.Solve(model)
@@ -746,21 +1244,42 @@ def _solve_master(group, menus, deadline: float, cp_model):
         emitted = _read(group, menus, patterns, usage, choice, solver, kerf, mode)
         if emitted is None:
             _NOTE.set("按需生成找到了分配，但料段供需没有对上，结果没有采用")
-            return "broken", None
-        return "feasible", emitted
+            return "broken", None, missing, weak
+        return "feasible", emitted, [], []
     if status == cp_model.INFEASIBLE:
-        return "infeasible", None
-    return "unknown", None
+        return "infeasible", None, missing, weak
+    return "unknown", None, missing, weak
 
 
-def _cut_columns(lengths: list[int], stocks: list[int], kerf: int, mode: str, deadline: float):
+def _cut_columns(
+    lengths: list[int],
+    stocks: list[int],
+    kerf: int,
+    mode: str,
+    deadline: float,
+    shapes: list[tuple[int, ...]] | None = None,
+):
     patterns: list[tuple[int, tuple[int, ...]]] = []
     seen: set[tuple[int, tuple[int, ...]]] = set()
+    supplied: set[int] = set()
+    exact_lengths: set[int] = set()
+    cap = _column_cap()
+    pieces_cap = _pieces_cap()
+    ticks = 0
 
     def add(stock: int, parts: tuple[int, ...], *, exact_only: bool) -> bool:
-        if len(patterns) >= _COLUMN_CAP:
+        nonlocal ticks
+        ticks += 1
+        if ticks >= 128:
+            ticks = 0
+            if time.monotonic() >= deadline:
+                _NOTE.set("按需生成时限内未知")
+                raise _Timeout
+        if len(patterns) >= cap:
             return False
-        canonical = tuple(sorted(parts))
+        canonical = tuple(sorted(p for p in parts if p > 0))
+        if not canonical:
+            return True
         key = (stock, canonical)
         if key in seen:
             return True
@@ -773,40 +1292,77 @@ def _cut_columns(lengths: list[int], stocks: list[int], kerf: int, mode: str, de
             return True
         seen.add(key)
         patterns.append((stock, canonical))
-        return len(patterns) < _COLUMN_CAP
+        for length in canonical:
+            supplied.add(length)
+            if candidate.remainder == 0:
+                exact_lengths.add(length)
+        return len(patterns) < cap
 
+    def stop(stock: int, parts: tuple[int, ...], *, exact_only: bool) -> bool:
+        return not add(stock, parts, exact_only=exact_only)
+
+    for shape in shapes or []:
+        if time.monotonic() >= deadline:
+            _NOTE.set("按需生成时限内未知")
+            raise _Timeout
+        for stock in stocks:
+            if stop(stock, shape, exact_only=False):
+                return patterns, supplied, exact_lengths
+    for length in lengths:
+        if length in supplied:
+            continue
+        if time.monotonic() >= deadline:
+            _NOTE.set("按需生成时限内未知")
+            raise _Timeout
+        for stock in stocks:
+            if length > stock:
+                continue
+            if stop(stock, (length,), exact_only=False):
+                return patterns, supplied, exact_lengths
+            if length in supplied:
+                break
+    length_set = set(lengths)
+    for stock in stocks:
+        if time.monotonic() >= deadline:
+            _NOTE.set("按需生成时限内未知")
+            raise _Timeout
+        for length in lengths:
+            complement = stock - kerf - length
+            if complement <= 0 or complement not in length_set:
+                continue
+            if stop(stock, (length, complement), exact_only=False):
+                return patterns, supplied, exact_lengths
     for exact_only in (True, False):
         for stock in stocks:
             if time.monotonic() >= deadline:
                 _NOTE.set("按需生成时限内未知")
                 raise _Timeout
             for length in lengths:
-                for copies in range(1, _MAX_PIECES_ON_BAR + 1):
-                    if not add(stock, (length,) * copies, exact_only=exact_only):
-                        return patterns
-            for index, left in enumerate(lengths):
-                for right in lengths[index + 1 :]:
-                    if not add(stock, (left, right), exact_only=exact_only):
-                        return patterns
-                    for copies in (2, 3):
-                        if copies + 1 > _MAX_PIECES_ON_BAR:
-                            continue
-                        if not add(stock, (left,) + (right,) * copies, exact_only=exact_only):
-                            return patterns
-                        if not add(stock, (right,) + (left,) * copies, exact_only=exact_only):
-                            return patterns
-            if len(lengths) <= 10:
+                for copies in range(1, pieces_cap + 1):
+                    if stop(stock, (length,) * copies, exact_only=exact_only):
+                        return patterns, supplied, exact_lengths
+            pair_lengths = lengths if len(lengths) <= 180 else lengths[:180]
+            for index, left in enumerate(pair_lengths):
+                for right in pair_lengths[index + 1 :]:
+                    if stop(stock, (left, right), exact_only=exact_only):
+                        return patterns, supplied, exact_lengths
+                    for copies in range(2, pieces_cap):
+                        if stop(stock, (left,) + (right,) * copies, exact_only=exact_only):
+                            return patterns, supplied, exact_lengths
+                        if stop(stock, (right,) + (left,) * copies, exact_only=exact_only):
+                            return patterns, supplied, exact_lengths
+            if len(lengths) <= 12:
                 for i, first in enumerate(lengths):
                     for j in range(i + 1, len(lengths)):
                         second = lengths[j]
                         for k in range(j + 1, len(lengths)):
-                            if not add(
+                            if stop(
                                 stock,
                                 (first, second, lengths[k]),
                                 exact_only=exact_only,
                             ):
-                                return patterns
-    return patterns
+                                return patterns, supplied, exact_lengths
+    return patterns, supplied, exact_lengths
 
 
 def _read(group, menus, patterns, usage, choice, solver, kerf: int, mode: str):

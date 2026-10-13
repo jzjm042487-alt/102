@@ -2741,12 +2741,15 @@ def _solve_group_stable_body(
         found["metrics"]["elapsed_seconds"] = round(time.monotonic() - started, 6)
         found["metrics"]["cpsat_elapsed_seconds"] = round(cpsat_elapsed, 6)
         found["metrics"]["ondemand_elapsed_seconds"] = round(ondemand_elapsed, 6)
+        from .engine_stable_ondemand import ondemand_tier_log
+
+        found["metrics"]["ondemand_tier_log"] = ondemand_tier_log()
         return found
     detail = ",".join(tried)
     if errors:
         detail += "；错误 " + " | ".join(errors[-3:])
     from .engine_stable_cpsat import cpsat_note
-    from .engine_stable_ondemand import ondemand_note
+    from .engine_stable_ondemand import ondemand_note, ondemand_tier_log
 
     note = cpsat_note()
     extra = ondemand_note()
@@ -2776,6 +2779,7 @@ def _solve_group_stable_body(
     failed["metrics"]["cpsat_elapsed_seconds"] = round(cpsat_elapsed, 6)
     failed["metrics"]["ondemand_elapsed_seconds"] = round(ondemand_elapsed, 6)
     failed["metrics"]["ondemand_note"] = extra
+    failed["metrics"]["ondemand_tier_log"] = ondemand_tier_log()
     return failed
 
 

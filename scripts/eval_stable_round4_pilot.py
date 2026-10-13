@@ -44,6 +44,7 @@ COLUMNS = [
     "兜底耗时",
     "按需耗时",
     "按需说明",
+    "档位记录",
     "分类",
 ]
 
@@ -99,6 +100,7 @@ def solve_index(
     cpsat_elapsed = ""
     ondemand_elapsed = ""
     ondemand_note = ""
+    tier_log = ""
     try:
         result = solve_payload(
             problem,
@@ -123,6 +125,7 @@ def solve_index(
         cpsat_elapsed = metrics.get("cpsat_elapsed_seconds", "")
         ondemand_elapsed = metrics.get("ondemand_elapsed_seconds", "")
         ondemand_note = str(metrics.get("ondemand_note") or "")
+        tier_log = str(metrics.get("ondemand_tier_log") or "")
         if not ondemand_note and "按需生成" in failure:
             ondemand_note = failure
         if status == "FEASIBLE":
@@ -161,6 +164,7 @@ def solve_index(
         "兜底耗时": cpsat_elapsed,
         "按需耗时": ondemand_elapsed,
         "按需说明": "" if feasible else ondemand_note[:500],
+        "档位记录": tier_log[:500],
         "分类": _classify(feasible, failure_class),
     }
 
@@ -229,7 +233,8 @@ def main() -> int:
             handle.flush()
             print(
                 f"{row['record_index']} {row['分类']} {row['是否可行']} "
-                f"ondemand {row['按需耗时']} total {row['耗时']} {row['策略来源']}",
+                f"ondemand {row['按需耗时']} total {row['耗时']} {row['策略来源']} "
+                f"{row['档位记录']}",
                 flush=True,
             )
     handle.close()
