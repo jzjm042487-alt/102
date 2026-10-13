@@ -452,6 +452,22 @@ def _parse_stocks(
     )
 
 
+def _lookup_blade_margin(
+    container: Mapping[str, Any],
+    nest_param: Mapping[str, Any],
+    path,
+) -> tuple[Any, str] | None:
+    """Read BladeMargin, including the corpus spelling ``Blademargin``."""
+
+    for key in ("BladeMargin", "Blademargin", "blade_margin"):
+        if key in nest_param:
+            return nest_param[key], path(f"NestParam.{key}")
+    for key in ("BladeMargin", "Blademargin", "blade_margin"):
+        if key in container:
+            return container[key], path(key)
+    return None
+
+
 def _payload_root(
     payload: Mapping[str, Any],
 ) -> tuple[Mapping[str, Any], list[Mapping[str, Any]], str, list[str]]:
@@ -493,14 +509,11 @@ def parse_problem(payload: dict[str, Any]) -> NestingProblem:
     path = lambda name: f"{root_path}.{name}" if root_path else name
     global_normalizations: list[InputNormalization] = []
     nest_param = root.get("NestParam") if isinstance(root.get("NestParam"), Mapping) else {}
-    blade_margin_raw = nest_param.get(
-        "BladeMargin", root.get("BladeMargin", DEFAULT_BLADE_MARGIN_MM)
-    )
-    blade_margin_path = (
-        path("NestParam.BladeMargin")
-        if "BladeMargin" in nest_param
-        else path("BladeMargin")
-    )
+    located = _lookup_blade_margin(root, nest_param, path)
+    if located is None:
+        blade_margin_raw, blade_margin_path = DEFAULT_BLADE_MARGIN_MM, path("BladeMargin")
+    else:
+        blade_margin_raw, blade_margin_path = located
     blade_margin = to_units(
         blade_margin_raw,
         field_name=blade_margin_path,
@@ -601,18 +614,12 @@ def parse_problem(payload: dict[str, Any]) -> NestingProblem:
             if isinstance(raw_group.get("NestParam"), Mapping)
             else {}
         )
-        group_blade_raw = group_nest_param.get(
-            "BladeMargin", raw_group.get("BladeMargin", blade_margin_raw)
-        )
-        group_blade_path = (
-            f"{group_path}.NestParam.BladeMargin"
-            if "BladeMargin" in group_nest_param
-            else (
-                f"{group_path}.BladeMargin"
-                if "BladeMargin" in raw_group
-                else blade_margin_path
-            )
-        )
+        group_path_of = lambda name: f"{group_path}.{name}" if group_path else name
+        located_group = _lookup_blade_margin(raw_group, group_nest_param, group_path_of)
+        if located_group is None:
+            group_blade_raw, group_blade_path = blade_margin_raw, blade_margin_path
+        else:
+            group_blade_raw, group_blade_path = located_group
         group_blade = to_units(
             group_blade_raw,
             field_name=group_blade_path,

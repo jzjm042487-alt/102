@@ -84,6 +84,16 @@ def test_tier_target_compares_fractions_not_percent() -> None:
     assert _tier_meets_target(high, group) is True
 
 
+def test_corpus_blademargin_spelling_is_honoured() -> None:
+    payload = _tiny(blade=None)
+    payload["Blademargin"] = "10"
+    # Single-group envelope: the typo key sits on the group itself.
+    group_payload = payload["input"]["data"][0]
+    group_payload["Blademargin"] = "10"
+    problem = parse_problem(group_payload)
+    assert problem.groups[0].blade_margin == 10
+
+
 def test_default_blade_margin_is_five_on_both_sides() -> None:
     payload = _tiny(blade=None)
     problem = parse_problem(payload)
