@@ -239,3 +239,163 @@ def test_patterns_for_keeps_stock_aligned_two_pieces() -> None:
     group = parse_problem(payload).groups[0]
     patterns = _patterns_for(group.pipes[0], group)
     assert any(60 in parts and 40 in parts for parts in patterns)
+
+
+def test_existing_strategy_order_matches_the_previous_round() -> None:
+    from app.engine_stable import _strategies
+
+    names = [name for name, _source, _function in _strategies()]
+    assert names == [
+        "whole-first",
+        "stock-peel-long",
+        "stock-peel-short",
+        "largest-early-finish",
+        "uniform-2",
+        "uniform-3",
+        "uniform-4",
+        "uniform-6",
+        "stock-tail",
+        "complement-mix",
+        "cross-complement",
+        "multi-stock-embed",
+        "shared-tail",
+        "short-stock-split",
+        "group-fallback",
+        "pattern-scan",
+        "adaptive-peel-long",
+        "adaptive-peel-short",
+        "baseline-restricted-master",
+    ]
+    assert "cpsat-feasibility" not in names
+
+
+def test_cpsat_runs_only_after_existing_strategies_and_on_its_own_clock(monkeypatch) -> None:
+    import time
+
+    from app.domain import parse_problem
+    from app.engine_stable import _CPSAT_LIMIT, solve_group_stable
+
+    calls: list[float] = []
+
+    def fake(group, deadline):
+        calls.append(deadline - time.monotonic())
+        return None
+
+    monkeypatch.setattr("app.engine_stable_cpsat.solve_group_cpsat", fake)
+    monkeypatch.setattr(
+        "app.engine_stable._strategies",
+        lambda: [("noop", "native", lambda group, deadline: None)],
+    )
+    payload = _flat_group()
+    group = parse_problem(payload).groups[0]
+    token = _CPSAT_LIMIT.set(1.25)
+    try:
+        result = solve_group_stable(group, 0.05)
+    finally:
+        _CPSAT_LIMIT.reset(token)
+    assert len(calls) == 1
+    assert 1.0 <= calls[0] <= 1.25
+    assert result["failure_class"] == "UNPROVED_NO_SOLUTION"
+    assert result["metrics"]["cpsat_elapsed_seconds"] < 0.5
+
+
+def test_cpsat_does_not_run_when_an_existing_strategy_succeeds(monkeypatch) -> None:
+    from app.engine_stable import _CPSAT_LIMIT
+
+    calls: list[int] = []
+
+    def fake(group, deadline):
+        calls.append(1)
+        return None
+
+    monkeypatch.setattr("app.engine_stable_cpsat.solve_group_cpsat", fake)
+    token = _CPSAT_LIMIT.set(5.0)
+    try:
+        result = _verified_stable(_flat_group(), 5)
+    finally:
+        _CPSAT_LIMIT.reset(token)
+    assert result["groups"][0]["metrics"]["stable_strategy"] != "cpsat-feasibility"
+    assert calls == []
+
+
+def test_cpsat_does_not_start_when_the_chain_deadline_stops_the_list(monkeypatch) -> None:
+    from app.domain import parse_problem
+    from app.engine_stable import _CPSAT_LIMIT, _Timeout, solve_group_stable
+
+    calls: list[int] = []
+
+    def fake(group, deadline):
+        calls.append(1)
+        return None
+
+    def boom(group, deadline):
+        raise _Timeout
+
+    monkeypatch.setattr("app.engine_stable_cpsat.solve_group_cpsat", fake)
+    monkeypatch.setattr(
+        "app.engine_stable._strategies",
+        lambda: [("boom", "native", boom), ("later", "native", lambda group, deadline: None)],
+    )
+    group = parse_problem(_flat_group()).groups[0]
+    token = _CPSAT_LIMIT.set(3.0)
+    try:
+        result = solve_group_stable(group, 5)
+    finally:
+        _CPSAT_LIMIT.reset(token)
+    assert calls == []
+    assert result["failure_class"] == "TIMEOUT_NO_SOLUTION"
+
+
+def test_cpsat_module_has_no_case_specific_branch() -> None:
+    import re
+
+    source = (Path(__file__).resolve().parents[1] / "app" / "engine_stable_cpsat.py").read_text(
+        encoding="utf-8"
+    )
+    assert "case_id" not in source
+    assert "record_index" not in source
+    assert not re.search(r"\b[0-9a-f]{8}-[0-9a-f]{4}-", source)
+    for token in ("2649", "2830", "2502", "11000", "1550", "12550"):
+        assert token not in source
+
+
+def test_cpsat_plan_verifies_and_does_not_claim_optimality() -> None:
+    from app.domain import parse_problem
+    from app.engine_stable import prepare_stable_payload
+    from app.engine_stable_cpsat import solve_group_cpsat
+
+    payload = _flat_group()
+    payload["Pipe"] = [
+        {
+            "figure_number": "A",
+            "Parent_node": "A",
+            "jlxh": "1",
+            "cube_no": "1",
+            "pipe_length": 100,
+            "pipe_demand": 3,
+            "Max_Weldingjoint_Number": 2,
+            "Unweldable_Area": [[48, 52]],
+        },
+        {
+            "figure_number": "B",
+            "Parent_node": "B",
+            "jlxh": "1",
+            "cube_no": "1",
+            "pipe_length": 70,
+            "pipe_demand": 3,
+            "Max_Weldingjoint_Number": 2,
+        },
+    ]
+    payload["Stock"] = [{"stock_length": 90, "stock_demand": 8, "must_use": 0}]
+    payload["NestParam"]["BladeMargin"] = 5
+    prepared = prepare_stable_payload(payload)
+    group = parse_problem(prepared).groups[0]
+    found = solve_group_cpsat(group, __import__("time").monotonic() + 8)
+    assert found is not None
+    assert found["metrics"]["solve_status"] == "FEASIBLE"
+    for row in found["welding_patterns"]:
+        position = 0
+        parts = [int(part) for part in row["parts"]]
+        for part in parts[:-1]:
+            position += part
+            assert not 48 <= position <= 52

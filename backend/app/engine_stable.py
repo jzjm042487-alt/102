@@ -50,6 +50,9 @@ from .solver import (
 STABLE_DEFAULT_TIME_LIMIT_SECONDS = 3600.0
 STABLE_PREVIEW_TIME_LIMIT_SECONDS = 60.0
 STABLE_DEFAULT_BLADE_MARGIN_MM = 5
+# Added after every existing strategy has failed. Never subtracted from
+# the strategy-chain limit. Zero skips the stage.
+STABLE_CPSAT_TIME_LIMIT_SECONDS = 15.0
 _NO_INTERVAL_CAP = 1
 _JOINT_CAP = 1_000_000
 
@@ -58,6 +61,9 @@ Strategy = Callable[[MaterialGroup, float], dict[str, Any] | None]
 # Stable search defaults this off. Baseline fallback / SCIP keep their own
 # default of True and do not read this variable.
 _ENFORCE_MUST = contextvars.ContextVar("stable_enforce_must_use", default=False)
+# Independent seconds for the last-stage catalogue search. None selects
+# STABLE_CPSAT_TIME_LIMIT_SECONDS. The strategy chain does not read this.
+_CPSAT_LIMIT = contextvars.ContextVar("stable_cpsat_limit", default=None)
 
 
 class _Timeout(Exception):
@@ -2544,7 +2550,12 @@ def _strategy_short_stock_split(group: MaterialGroup, deadline: float) -> dict[s
 
 
 def _strategies() -> list[tuple[str, str, Strategy]]:
-    """(name, result_source, function). Order is the feasibility search order."""
+    """(name, result_source, function). Order is the feasibility search order.
+
+    This list is the previous round's chain. The catalogue search is not a
+    member: it starts only after every function here has returned no plan,
+    on a clock that is not this chain's deadline.
+    """
 
     return [
         ("whole-first", "native", _strategy_whole),
@@ -2697,11 +2708,27 @@ def _solve_group_stable_body(
         if found is not None:
             found = _mark_feasible(found, name, source)
             found["metrics"]["elapsed_seconds"] = round(time.monotonic() - started, 6)
+            found["metrics"]["cpsat_elapsed_seconds"] = 0.0
             return found
+    # Every existing strategy has now returned no plan. The catalogue
+    # search starts here, on its own clock, and does not change the
+    # deadline those strategies already used.
+    found, cpsat_elapsed, cpsat_timeout = _cpsat_last_stage(group)
+    if found is not None:
+        found = _mark_feasible(found, "cpsat-feasibility", "cpsat")
+        found["metrics"]["elapsed_seconds"] = round(time.monotonic() - started, 6)
+        found["metrics"]["cpsat_elapsed_seconds"] = round(cpsat_elapsed, 6)
+        return found
     detail = ",".join(tried)
     if errors:
         detail += "；错误 " + " | ".join(errors[-3:])
-    if time.monotonic() >= deadline:
+    from .engine_stable_cpsat import cpsat_note
+
+    note = cpsat_note()
+    if cpsat_timeout:
+        failure_class = "TIMEOUT_NO_SOLUTION"
+        message = "现有策略均未找到可行解，CP-SAT 兜底在独立时限内未知：" + detail
+    elif _cpsat_budget() <= 0 and time.monotonic() >= deadline:
         failure_class = "TIMEOUT_NO_SOLUTION"
         message = "时限内没有可行解：" + detail
     else:
@@ -2709,7 +2736,39 @@ def _solve_group_stable_body(
         message = "全部构造策略结束仍无可行解（未证明不可行）：" + detail
         if gap:
             message = gap + "；" + message
-    return _fail_group(group, failure_class, message, time.monotonic() - started)
+    if note:
+        message = message + "；" + note
+    failed = _fail_group(group, failure_class, message, time.monotonic() - started)
+    failed["metrics"]["cpsat_elapsed_seconds"] = round(cpsat_elapsed, 6)
+    return failed
+
+
+def _cpsat_budget() -> float:
+    raw = _CPSAT_LIMIT.get()
+    if raw is None:
+        return STABLE_CPSAT_TIME_LIMIT_SECONDS
+    return float(raw)
+
+
+def _cpsat_last_stage(group: MaterialGroup) -> tuple[dict[str, Any] | None, float, bool]:
+    """Catalogue search after the existing chain.
+
+    Returns ``(plan or None, seconds spent, timed_out)``. An infeasible
+    catalogue is not a proof, so this function does not raise a stock-gap
+    failure. ``timed_out`` means the independent budget ended with no plan.
+    """
+
+    budget = _cpsat_budget()
+    if budget <= 0:
+        return None, 0.0, False
+    from .engine_stable_cpsat import solve_group_cpsat
+
+    started = time.monotonic()
+    try:
+        found = solve_group_cpsat(group, started + budget)
+    except _Timeout:
+        return None, time.monotonic() - started, True
+    return found, time.monotonic() - started, False
 
 
 def solve_stable_problem(
@@ -2718,6 +2777,7 @@ def solve_stable_problem(
     *,
     checkpoint_path: str | None = None,
     enforce_must_use: bool | None = None,
+    cpsat_time_limit: float | None = None,
 ) -> list[dict[str, Any]]:
     if enforce_must_use is None:
         from .verifier import must_use_enforced
@@ -2733,8 +2793,33 @@ def solve_stable_problem(
     groups: list[dict[str, Any]] = list(state.get("groups") or [])
     if state.get("done") and len(groups) == len(problem.groups):
         return groups
+    if cpsat_time_limit is None:
+        cpsat_time_limit = STABLE_CPSAT_TIME_LIMIT_SECONDS
+    cpsat_token = _CPSAT_LIMIT.set(cpsat_time_limit)
     started = time.monotonic()
     deadline = started + max(time_limit_seconds, 0.0)
+    try:
+        return _solve_stable_groups(
+            problem,
+            state,
+            groups,
+            deadline,
+            checkpoint_path=checkpoint_path,
+            enforce_must_use=bool(enforce_must_use),
+        )
+    finally:
+        _CPSAT_LIMIT.reset(cpsat_token)
+
+
+def _solve_stable_groups(
+    problem: NestingProblem,
+    state: dict[str, Any],
+    groups: list[dict[str, Any]],
+    deadline: float,
+    *,
+    checkpoint_path: str | None,
+    enforce_must_use: bool,
+) -> list[dict[str, Any]]:
     for index in range(len(groups), len(problem.groups)):
         remaining_groups = len(problem.groups) - index
         budget = max(0.05, (deadline - time.monotonic()) / max(1, remaining_groups))
@@ -2747,6 +2832,10 @@ def solve_stable_problem(
             group_index=index,
             enforce_must_use=enforce_must_use,
         )
+        # The catalogue stage spends wall time after the chain. Give that
+        # time back so the next group's existing strategies keep their share
+        # of the original limit.
+        deadline += float((result.get("metrics") or {}).get("cpsat_elapsed_seconds") or 0.0)
         groups.append(result)
         state["groups"] = groups
         state["strategies_done"] = []
