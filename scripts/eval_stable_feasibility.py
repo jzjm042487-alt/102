@@ -1,9 +1,10 @@
 """Resumable feasibility evaluation for ``engine="stable"``.
 
-The formal per-case default inside the engine is 3600s. This script's
-``--time-limit`` is the measured cap. Strategies run in a fixed order and
-stop at the first verifier-sized feasible plan, so a longer cap can only
-add candidates that the shorter cap did not reach.
+``--time-limit`` is the existing strategy chain. ``--cpsat-time-limit`` is
+a separate clock that starts only after that chain fails. The default
+``--split dev`` excludes the frozen blind cases in
+``docs/stable-round3-split.json``. ``blind`` and ``all`` require
+``--confirm-blind``.
 """
 
 from __future__ import annotations
