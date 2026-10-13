@@ -180,8 +180,8 @@ def _seed_weld_patterns(
     found: set[tuple[int, ...]] = set()
     priority: list[tuple[int, ...]] = []
 
-    def consider(parts: tuple[int, ...]) -> None:
-        if budget.expired:
+    def consider(parts: tuple[int, ...], *, force: bool = False) -> None:
+        if budget.expired and not force:
             return
         if _legal_parts(
             pipe,
@@ -194,7 +194,9 @@ def _seed_weld_patterns(
             found.add(parts)
 
     if length <= max_stock:
-        consider((length,))
+        # A whole pipe does not depend on the search budget.  A shared budget
+        # must not drop it for pipes that are visited after the cap is spent.
+        consider((length,), force=True)
     if pipe.max_joints <= 1 and length <= EXACT_LENGTH_LIMIT:
         # Complete for at most one weld: every legal coordinate, not a grid of
         # stock lengths.  Still node-budgeted.
@@ -390,11 +392,25 @@ def _seed_cut_patterns(
         for segment in segments:
             if not budget.tick():
                 return found
-            if segment <= stock:
-                add(stock, (segment,))
-            for copies in range(2, MAX_IDENTICAL_REPEAT + 1):
+            if segment > stock:
+                continue
+            add(stock, (segment,))
+            # One fullest column, not one column per copy.  Repeating every
+            # legal copy is what hung the previous knapsack on large orders.
+            low, high = 2, min(48, stock // segment)
+            best = 1
+            while low <= high:
                 if not budget.tick():
                     return found
+                mid = (low + high) // 2
+                if _fits(stock, (segment,) * mid, kerf, kerf_mode):
+                    best = mid
+                    low = mid + 1
+                else:
+                    high = mid - 1
+            if best >= 2:
+                add(stock, (segment,) * best)
+            for copies in range(2, min(MAX_IDENTICAL_REPEAT, best) + 1):
                 add(stock, (segment,) * copies)
         if pair_ok:
             for index, left in enumerate(segments):
@@ -1006,11 +1022,14 @@ def solve_group(
     seed_nodes = SEED_NODE_BUDGET if node_budget is None else node_budget
     cut_nodes = CUT_NODE_BUDGET if node_budget is None else node_budget
     price_nodes = PRICE_NODE_BUDGET if node_budget is None else node_budget
-    seed_budget = _Budget(deadline, seed_nodes)
     stocks = [stock.length for stock in group.stocks]
     quantities = {stock.length: stock.quantity for stock in group.stocks}
     weld_columns: list[_WeldCol] = []
     seed_truncated = False
+    # Each pipe gets its own node budget.  One shared counter let the first
+    # tubes spend every node and left the rest of a multi-pipe order with no
+    # columns, which the master then reported as unsolved.
+    pipe_nodes = max(1, seed_nodes // max(1, len(group.pipes)))
     for pipe_index, pipe in enumerate(group.pipes):
         patterns, truncated = _seed_weld_patterns(
             pipe,
@@ -1018,7 +1037,7 @@ def solve_group(
             kerf=group.blade_margin,
             min_weld=group.min_weld_distance,
             min_cut=group.min_cut_length,
-            budget=seed_budget,
+            budget=_Budget(deadline, pipe_nodes),
         )
         seed_truncated = seed_truncated or truncated
         for parts in patterns:
