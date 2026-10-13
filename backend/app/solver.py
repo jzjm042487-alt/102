@@ -2051,6 +2051,7 @@ def solve_payload(
     payload: dict[str, Any], *, time_limit_seconds: float | None = None,
     engine: str = "baseline",
     checkpoint_path: str | None = None,
+    cpsat_time_limit: float | None = None,
 ) -> dict[str, Any]:
     """Solve all material/specification pools in a MOM payload.
 
@@ -2061,9 +2062,12 @@ def solve_payload(
     the default), ``route3`` (legacy set-covering ILP), ``v4`` (arc-flow +
     classifier routing), ``global`` (phased joint cut+weld ILP with util
     floor), ``rcg`` (two-stage row-and-column generation), or ``stable``
-    (feasibility-first multi-strategy search).  ``stable`` does not replace
+    (feasibility-first multi-strategy search).      ``stable`` does not replace
     the default.  Its own default time limit is 3600s when the caller omits
-    one.  ``rcg``/``route3``/``v4``/``global`` fall back to baseline per group
+    one.  That limit is the existing strategy chain.  ``cpsat_time_limit``
+    is an extra clock for the catalogue stage and is not taken out of it;
+    ``None`` uses the engine default and ``0`` skips the stage.
+    ``rcg``/``route3``/``v4``/``global`` fall back to baseline per group
     when they find no solution within ``time_limit_seconds``.
     """
 
@@ -2084,6 +2088,7 @@ def solve_payload(
             problem,
             float(time_limit_seconds),
             checkpoint_path=checkpoint_path,
+            cpsat_time_limit=cpsat_time_limit,
         )
     else:
         groups = _solve_problem(problem, float(time_limit_seconds), engine=engine)

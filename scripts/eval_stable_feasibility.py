@@ -19,7 +19,9 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 RECORDS = ROOT / "backend/data/samples/software-io/batch-DGMOM/software_records.json"
-DEFAULT_CSV = ROOT / "docs/stable-feasibility-results.csv"
+DEFAULT_CSV = ROOT / "docs/stable-round3-results.csv"
+ROUND2_CSV = ROOT / "docs/stable-feasibility-results.csv"
+SPLIT_JSON = ROOT / "docs/stable-round3-split.json"
 
 COLUMNS = [
     "case_id",
@@ -36,6 +38,7 @@ COLUMNS = [
     "利用率",
     "校验通过",
     "状态",
+    "兜底耗时",
 ]
 
 
@@ -90,7 +93,7 @@ def _load_done(path: Path) -> set[str]:
         return {row["case_id"] for row in csv.DictReader(handle) if row.get("case_id")}
 
 
-def solve_index(index: int, time_limit: float) -> dict[str, str]:
+def solve_index(index: int, time_limit: float, cpsat_time_limit: float) -> dict[str, str]:
     from app.solver import solve_payload
     from app.verifier import verify_solution
 
@@ -110,8 +113,14 @@ def solve_index(index: int, time_limit: float) -> dict[str, str]:
     weld_types = ""
     cut_types = ""
     utilization = ""
+    cpsat_elapsed = ""
     try:
-        result = solve_payload(problem, time_limit_seconds=time_limit, engine="stable")
+        result = solve_payload(
+            problem,
+            time_limit_seconds=time_limit,
+            engine="stable",
+            cpsat_time_limit=cpsat_time_limit,
+        )
         prepared = result.pop("_stable_prepared_payload", problem)
         status = str(result.get("status") or "")
         group = (result.get("groups") or [{}])[0]
@@ -125,6 +134,7 @@ def solve_index(index: int, time_limit: float) -> dict[str, str]:
         cut_types = metrics.get("cutting_pattern_type_quantity", "")
         summary = result.get("summary") or {}
         utilization = summary.get("utilization_rate", "")
+        cpsat_elapsed = metrics.get("cpsat_elapsed_seconds", "")
         if status == "FEASIBLE":
             verified = verify_solution(prepared, result).get("passed") is True
             feasible = verified
@@ -152,19 +162,60 @@ def solve_index(index: int, time_limit: float) -> dict[str, str]:
         "利用率": utilization if feasible else "",
         "校验通过": "是" if verified else "否",
         "状态": status,
+        "兜底耗时": cpsat_elapsed,
     }
+
+
+def _selected_indexes(kind: str) -> set[int] | None:
+    """Return the record indexes for one frozen split.
+
+    ``all`` is the only mode that includes the blind cases, and the caller
+    has to pass ``--confirm-blind`` before this function is used for it.
+    """
+
+    if kind == "all":
+        return None
+    if kind == "regression":
+        chosen: set[int] = set()
+        with ROUND2_CSV.open(encoding="utf-8", newline="") as handle:
+            for row in csv.DictReader(handle):
+                if row.get("是否可行") == "是":
+                    chosen.add(int(row["record_index"]))
+        return chosen
+    data = json.loads(SPLIT_JSON.read_text(encoding="utf-8"))
+    key = "dev_record_indexes" if kind == "dev" else "blind_record_indexes"
+    return {int(index) for index in data[key]}
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--time-limit", type=float, default=15.0)
+    parser.add_argument(
+        "--cpsat-time-limit",
+        type=float,
+        default=15.0,
+        help="Independent budget for the last-stage catalogue search. Not taken from --time-limit.",
+    )
     parser.add_argument("--workers", type=int, default=4)
     parser.add_argument("--csv", type=Path, default=DEFAULT_CSV)
     parser.add_argument("--limit-cases", type=int, default=0)
+    parser.add_argument(
+        "--split",
+        choices=["dev", "blind", "regression", "all"],
+        default="dev",
+        help="dev is the tuning set. blind and all require --confirm-blind.",
+    )
+    parser.add_argument("--confirm-blind", action="store_true")
     args = parser.parse_args()
+    if args.split in {"blind", "all"} and not args.confirm_blind:
+        print("refusing to run the blind split without --confirm-blind", flush=True)
+        return 2
 
     records = json.loads(RECORDS.read_text(encoding="utf-8"))["RECORDS"]
     indexes = legacy_success_indexes(records)
+    selected = _selected_indexes(args.split)
+    if selected is not None:
+        indexes = [index for index in indexes if index in selected]
     if args.limit_cases:
         indexes = indexes[: args.limit_cases]
     args.csv.parent.mkdir(parents=True, exist_ok=True)
@@ -174,7 +225,11 @@ def main() -> int:
         case_id = str(records[index].get("ID") or index)
         if case_id not in done:
             pending.append(index)
-    print(f"corpus {len(indexes)} done {len(done)} pending {len(pending)}", flush=True)
+    print(
+        f"split {args.split} corpus {len(indexes)} done {len(done)} pending {len(pending)} "
+        f"chain {args.time_limit}s cpsat {args.cpsat_time_limit}s",
+        flush=True,
+    )
     new_file = not args.csv.exists()
     handle = args.csv.open("a", encoding="utf-8", newline="")
     writer = csv.DictWriter(handle, fieldnames=COLUMNS)
@@ -183,7 +238,10 @@ def main() -> int:
         handle.flush()
     finished = 0
     with ProcessPoolExecutor(max_workers=max(1, args.workers)) as pool:
-        futures = [pool.submit(solve_index, index, args.time_limit) for index in pending]
+        futures = [
+            pool.submit(solve_index, index, args.time_limit, args.cpsat_time_limit)
+            for index in pending
+        ]
         for future in as_completed(futures):
             row = future.result()
             writer.writerow(row)
