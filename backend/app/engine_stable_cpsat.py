@@ -36,6 +36,11 @@ _NOTE: contextvars.ContextVar[str] = contextvars.ContextVar("stable_cpsat_note",
 # Weld patterns kept per pipe after the stock-aligned two-pieces.
 _EXTRA_TWOS = 12
 _EXTRA_LONG = 24
+# Pieces on one bar in the arc-flow cut model, and the arc budget that
+# keeps that model small enough to build. Both are catalogue limits, not
+# order-specific lengths.
+_MAX_PIECES = 6
+_MAX_FLOW_ARCS = 80000
 
 
 def cpsat_note() -> str:
@@ -70,7 +75,7 @@ def solve_group_cpsat(group: MaterialGroup, deadline: float) -> dict | None:
             return None
         built = _build_model(group, catalogues, cp_model)
         if built is None:
-            _NOTE.set("CP-SAT 缺口：切法列太多，这一档目录没有建起来")
+            _NOTE.set("CP-SAT 缺口：弧流上限内没有留下每根管子都能用的拼法")
             continue
         model, pack = built
         solver = cp_model.CpSolver()
@@ -88,7 +93,7 @@ def solve_group_cpsat(group: MaterialGroup, deadline: float) -> dict | None:
         status = solver.Solve(model)
         name = solver.StatusName(status)
         if status in (cp_model.OPTIMAL, cp_model.FEASIBLE):
-            emitted = _read_solution(group, catalogues, pack, solver, time.monotonic())
+            emitted = _read_solution(group, pack, solver, time.monotonic())
             if emitted is None:
                 _NOTE.set("CP-SAT 找到了分配，但料段供需没有对上，结果没有采用")
                 return None
@@ -96,7 +101,7 @@ def solve_group_cpsat(group: MaterialGroup, deadline: float) -> dict | None:
             return emitted
         if name == "INFEASIBLE":
             _NOTE.set(
-                "CP-SAT 在拼法目录和切法族（相同段、两段配对、一根长段加重复短段）内不可行，"
+                "CP-SAT 在拼法目录和弧流切法（每根料最多若干段）内不可行，"
                 "没有证明订单本身不可行"
             )
             continue
@@ -314,6 +319,84 @@ def _limit_lengths(
     return chosen
 
 
+def _stock_graph(lengths: list[int], stock: int, kerf: int, mode: str):
+    """Reachable arc-flow for one stock length.
+
+    A node is ``(pieces, used)`` where ``used`` is the sum of piece lengths
+    plus the kerf between them. Ending a bar is legal only when the same
+    rule as ``_CutCandidate.remainder`` accepts that prefix.
+    """
+
+    use: list[tuple[int, int, int, int, int]] = []
+    seen = {(0, 0)}
+    layer = [(0, 0)]
+    for _piece in range(_MAX_PIECES):
+        nxt: list[tuple[int, int]] = []
+        fresh: set[tuple[int, int]] = set()
+        for count, used in layer:
+            pay = kerf if count else 0
+            for length in lengths:
+                nxt_used = used + pay + length
+                if nxt_used > stock:
+                    continue
+                state = (count + 1, nxt_used)
+                use.append((count, used, length, state[0], state[1]))
+                if state not in seen:
+                    seen.add(state)
+                    if state not in fresh:
+                        fresh.add(state)
+                        nxt.append(state)
+        layer = nxt
+        if not layer:
+            break
+    ends: list[tuple[int, int]] = []
+    for count, used in seen:
+        if count == 0:
+            continue
+        if mode == "WITH_REMAINDER" and used < stock and used + kerf > stock:
+            continue
+        ends.append((count, used))
+    end_set = set(ends)
+    outgoing = {(count, used) for count, used, _length, _ncount, _nused in use}
+    use = [
+        arc
+        for arc in use
+        if (arc[3], arc[4]) in end_set or (arc[3], arc[4]) in outgoing
+    ]
+    return use, ends
+
+
+def _flow_arcs(lengths: list[int], stocks: list[int], kerf: int, mode: str) -> int:
+    total = 0
+    for stock in stocks:
+        use, ends = _stock_graph(lengths, stock, kerf, mode)
+        total += len(use) + len(ends)
+        if total > _MAX_FLOW_ARCS:
+            return total
+    return total
+
+
+def _trim_menus(menus, stocks: list[int], kerf: int, mode: str):
+    """Keep the most common piece lengths whose arc-flow still fits."""
+
+    freq: Counter[int] = Counter()
+    for menu in menus:
+        for parts in menu:
+            freq.update(set(parts))
+    ranked = sorted(freq, key=lambda length: (-freq[length], length))
+    best_n = 0
+    low, high = 1, len(ranked)
+    while ranked and low <= high:
+        mid = (low + high) // 2
+        if _flow_arcs(ranked[:mid], stocks, kerf, mode) <= _MAX_FLOW_ARCS:
+            best_n = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+    allowed = set(ranked[:best_n])
+    return [[parts for parts in menu if set(parts) <= allowed] for menu in menus]
+
+
 def _build_model(group: MaterialGroup, catalogues, cp_model):
     kerf = group.blade_margin
     mode = group.kerf_mode
@@ -321,112 +404,130 @@ def _build_model(group: MaterialGroup, catalogues, cp_model):
     for stock in group.stocks:
         avail[stock.length] += stock.quantity
     stocks = [length for length, qty in sorted(avail.items()) if qty > 0]
+    trimmed = _trim_menus(catalogues, stocks, kerf, mode)
+    if not trimmed or any(not menu for menu in trimmed):
+        return None
     model = cp_model.CpModel()
     choice: list[list] = []
     for pipe_index, pipe in enumerate(group.pipes):
         row = []
-        for pattern_index, _parts in enumerate(catalogues[pipe_index]):
+        for pattern_index, _parts in enumerate(trimmed[pipe_index]):
             row.append(model.NewIntVar(0, pipe.demand, f"x{pipe_index}_{pattern_index}"))
         model.Add(sum(row) == pipe.demand)
         choice.append(row)
-    lengths = sorted({part for menu in catalogues for parts in menu for part in parts})
+    lengths = sorted({part for menu in trimmed for parts in menu for part in parts})
     demand_terms: dict[int, list] = {length: [] for length in lengths}
-    for pipe_index, menu in enumerate(catalogues):
+    for pipe_index, menu in enumerate(trimmed):
         for pattern_index, parts in enumerate(menu):
             for length, copies in Counter(parts).items():
                 var = choice[pipe_index][pattern_index]
                 demand_terms[length].append(var if copies == 1 else copies * var)
-    patterns = _cut_patterns(lengths, stocks, kerf, mode)
-    if len(patterns) > 90000:
-        return None
-    usage = [
-        model.NewIntVar(0, avail[stock], f"y{index}")
-        for index, (stock, _recipe) in enumerate(patterns)
-    ]
-    for length in lengths:
-        produced = []
-        for var, (_stock, recipe) in zip(usage, patterns):
-            copies = recipe.get(length, 0)
-            if copies == 1:
-                produced.append(var)
-            elif copies > 1:
-                produced.append(copies * var)
-        if not produced:
-            if demand_terms[length]:
-                model.Add(sum(demand_terms[length]) == 0)
+    graphs = []
+    produced: dict[int, list] = {length: [] for length in lengths}
+    serial = 0
+    for stock in stocks:
+        use, ends = _stock_graph(lengths, stock, kerf, mode)
+        use_vars = []
+        inflow: dict[tuple[int, int], list] = defaultdict(list)
+        outflow: dict[tuple[int, int], list] = defaultdict(list)
+        for count, used, length, ncount, nused in use:
+            var = model.NewIntVar(0, avail[stock], f"a{serial}")
+            serial += 1
+            use_vars.append(var)
+            outflow[(count, used)].append(var)
+            inflow[(ncount, nused)].append(var)
+            produced[length].append(var)
+        end_vars = {}
+        for count, used in ends:
+            var = model.NewIntVar(0, avail[stock], f"e{serial}")
+            serial += 1
+            end_vars[(count, used)] = var
+        nodes = set(outflow) | set(inflow) | set(end_vars)
+        for node in nodes:
+            if node == (0, 0):
+                continue
+            incoming = inflow.get(node, [])
+            outgoing = list(outflow.get(node, []))
+            end_var = end_vars.get(node)
+            if end_var is not None:
+                outgoing.append(end_var)
+            if incoming and outgoing:
+                model.Add(sum(incoming) == sum(outgoing))
+            elif incoming:
+                model.Add(sum(incoming) == 0)
+        started = outflow.get((0, 0), [])
+        if not started:
+            return None
+        model.Add(sum(started) <= avail[stock])
+        graphs.append((stock, use, use_vars, end_vars))
+    for length, terms in demand_terms.items():
+        made = produced[length]
+        if not made:
+            if terms:
+                model.Add(sum(terms) == 0)
             continue
-        model.Add(sum(demand_terms[length]) == sum(produced))
-    by_stock: dict[int, list] = defaultdict(list)
-    for var, (stock, _recipe) in zip(usage, patterns):
-        by_stock[stock].append(var)
-    for stock, terms in by_stock.items():
-        model.Add(sum(terms) <= avail[stock])
-    return model, (patterns, usage, choice, kerf, mode)
+        model.Add(sum(terms) == sum(made))
+    return model, (trimmed, graphs, choice, kerf, mode)
 
 
-def _cut_patterns(
-    lengths: list[int], stocks: list[int], kerf: int, mode: str
-) -> list[tuple[int, Counter[int]]]:
-    patterns: list[tuple[int, Counter[int]]] = []
-    seen: set[tuple[int, tuple[int, ...]]] = set()
+def _decompose(use, use_vars, end_vars, solver) -> list[tuple[tuple[int, ...], int]] | None:
+    flows = [solver.Value(var) for var in use_vars]
+    end_flow = {node: solver.Value(var) for node, var in end_vars.items()}
+    adj: dict[tuple[int, int], list[int]] = defaultdict(list)
+    for index, (count, used, _length, _ncount, _nused) in enumerate(use):
+        if flows[index] > 0:
+            adj[(count, used)].append(index)
 
-    def add(stock: int, parts: tuple[int, ...]) -> None:
-        if any(part <= 0 for part in parts):
-            return
-        key = (stock, tuple(sorted(parts)))
-        if key in seen:
-            return
-        if _CutCandidate(stock, key[1], kerf, mode).remainder < 0:
-            return
-        seen.add(key)
-        patterns.append((stock, Counter(key[1])))
+    def search(node: tuple[int, int]) -> tuple[list[int], tuple[int, int]] | None:
+        if node != (0, 0) and end_flow.get(node, 0) > 0:
+            return [], node
+        for index in adj.get(node, []):
+            if flows[index] <= 0:
+                continue
+            _count, _used, _length, ncount, nused = use[index]
+            found = search((ncount, nused))
+            if found is not None:
+                arc_ids, end = found
+                return [index, *arc_ids], end
+        return None
 
-    for index, left in enumerate(lengths):
-        for copies in range(1, 7):
-            placed = False
-            blob = (left,) * copies
-            for stock in stocks:
-                before = len(patterns)
-                add(stock, blob)
-                placed = placed or len(patterns) > before
-            if not placed:
-                break
-        for right in lengths[index + 1 :]:
-            for stock in stocks:
-                add(stock, (left, right))
-            for copies in range(2, 5):
-                placed = False
-                for stock in stocks:
-                    before = len(patterns)
-                    add(stock, (left,) + (right,) * copies)
-                    add(stock, (right,) + (left,) * copies)
-                    placed = placed or len(patterns) > before
-                if not placed:
-                    break
-    if len(lengths) <= 18 and len(patterns) < 70000:
-        for i, first in enumerate(lengths):
-            for j in range(i + 1, len(lengths)):
-                second = lengths[j]
-                for k in range(j + 1, len(lengths)):
-                    third = lengths[k]
-                    for stock in stocks:
-                        add(stock, (first, second, third))
+    patterns: list[tuple[tuple[int, ...], int]] = []
+    while True:
+        found = search((0, 0))
+        if found is None:
+            break
+        arc_ids, end = found
+        qty = end_flow.get(end, 0)
+        for index in arc_ids:
+            qty = min(qty, flows[index])
+        if qty <= 0:
+            return None
+        for index in arc_ids:
+            flows[index] -= qty
+        end_flow[end] = end_flow.get(end, 0) - qty
+        parts = tuple(sorted(use[index][2] for index in arc_ids))
+        patterns.append((parts, qty))
+    if any(qty > 0 for qty in flows) or any(qty > 0 for qty in end_flow.values()):
+        return None
     return patterns
 
 
-def _read_solution(group, catalogues, pack, solver, started: float):
-    patterns, usage, choice, kerf, mode = pack
+def _read_solution(group, pack, solver, started: float):
+    trimmed, graphs, choice, kerf, mode = pack
     weld: Counter[tuple[int, tuple[int, ...]]] = Counter()
-    for pipe_index, menu in enumerate(catalogues):
+    for pipe_index, menu in enumerate(trimmed):
         for pattern_index, parts in enumerate(menu):
             qty = solver.Value(choice[pipe_index][pattern_index])
             if qty > 0:
                 weld[(pipe_index, parts)] += qty
     merged: Counter[tuple[int, tuple[int, ...]]] = Counter()
-    for var, (stock, recipe) in zip(usage, patterns):
-        qty = solver.Value(var)
-        if qty > 0:
-            merged[(stock, tuple(sorted(recipe.elements())))] += qty
+    for stock, use, use_vars, end_vars in graphs:
+        decomposed = _decompose(use, use_vars, end_vars, solver)
+        if decomposed is None:
+            return None
+        for parts, qty in decomposed:
+            if qty > 0:
+                merged[(stock, parts)] += qty
     cuts = [
         (_CutCandidate(stock, parts, kerf, mode), qty)
         for (stock, parts), qty in merged.items()
