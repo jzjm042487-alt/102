@@ -27,11 +27,9 @@ def solve_and_verify(
         else settings.default_time_limit_seconds,
         engine=engine,
     )
-    # The parser defaults the cutting kerf to 0 (field MOM export and the legacy
-    # nesting software both plan cut lengths kerf-free) while the verifier's own
-    # fallback is 10 mm.  When the payload omits BladeMargin the two disagree and
-    # the verifier would recompute kerf/remainder against a kerf the solver never
-    # used, so pin the verifier to the same default the solver built with.
+    # Solver and verifier both default BladeMargin to 5 mm.  Payloads that omit
+    # the field still need the same number on both sides, so pin it explicitly
+    # before verification when the caller did not supply one.
     verify_payload = payload
     _has_blade = (
         isinstance(payload.get("NestParam"), dict)

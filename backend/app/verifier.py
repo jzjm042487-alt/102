@@ -83,7 +83,7 @@ def _extract_problem_contexts(payload: Any, issues: list[dict]) -> list[dict]:
     if root_blade_margin is None:
         root_blade_margin = _first(root, "BladeMargin", "blade_margin")
     if root_blade_margin is None:
-        root_blade_margin = 10
+        root_blade_margin = 5
     root_min_weld = _first(root, "Min_Welding_Length", "min_welding_length")
     if root_min_weld is None:
         root_min_weld = 500

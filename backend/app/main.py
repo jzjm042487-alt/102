@@ -70,7 +70,7 @@ async def solve(
         float | None, Query(ge=1, le=3600)
     ] = None,
     engine: Annotated[
-        str, Query(pattern="^(baseline|route3|v4|global)$")
+        str, Query(pattern="^(baseline|lexcg|route3|v4|global|rcg)$")
     ] = "baseline",
 ) -> dict[str, Any]:
     started = time.monotonic()
