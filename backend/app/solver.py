@@ -23,6 +23,8 @@ import time
 from typing import Any, Iterable, Sequence
 
 from .domain import (
+    DEFAULT_MAX_JOINTS_CAP,
+    DEFAULT_WELD_INTERVAL_MM,
     LENGTH_SCALE,
     MaterialGroup,
     NestingProblem,
@@ -334,7 +336,7 @@ def _snap_split(
     if target_segment <= 0:
         return None
     n = max(1, round(pipe.length / target_segment))
-    n = min(n, pipe.max_joints + 1)
+    n = min(n, _search_joint_budget(pipe) + 1)
     if n < 1:
         return None
     if n == 1:
@@ -375,6 +377,24 @@ def _snap_split(
     return None
 
 
+def _search_joint_budget(pipe: PipeDemand) -> int:
+    """How many joints the baseline candidate generator is willing to search.
+
+    ``Max_Weldingjoint_Number`` of 2000 means the shop limit is unlimited, and
+    that value is what ``pipe.max_joints`` stores.  Expanding every piece count
+    up to 2000 changes which standard patterns survive the per-pipe cap and
+    drops the columns the baseline material optimum is built from.  The search
+    window below is the historical one-splice-per-3000 mm budget (at most 13).
+    It is not written back onto the pipe, so ``lexcg`` still treats 2000 as
+    unlimited and enforces only the input joint cap.
+    """
+
+    process = pipe.length // DEFAULT_WELD_INTERVAL_MM
+    if process <= 0:
+        process = 1
+    return max(0, min(pipe.max_joints, process, DEFAULT_MAX_JOINTS_CAP))
+
+
 def _standard_segment_lengths(group: MaterialGroup) -> list[int]:
     """Pick a small set of group-level *standard* segment lengths.
 
@@ -401,7 +421,8 @@ def _standard_segment_lengths(group: MaterialGroup) -> list[int]:
             if piece > 0:
                 lengths.add(piece)
     for pipe in group.pipes:
-        for pieces in range(1, pipe.max_joints + 2):
+        # Piece count follows the baseline search budget, not the raw 2000 cap.
+        for pieces in range(1, _search_joint_budget(pipe) + 2):
             piece = pipe.length // pieces
             if 0 < piece <= max_stock:
                 lengths.add(piece)
@@ -1459,7 +1480,10 @@ def _tier_meets_target(result: dict[str, Any], group: MaterialGroup) -> bool:
     achieved = metrics.get("utilization_rate")
     if achieved is None:
         return False
-    return achieved * 100.0 >= group.target_rate - 1e-9
+    # ``utilization_rate`` and ``target_rate`` are both fractions in (0, 1].
+    # Comparing ``achieved * 100`` against the fraction treated every plan above
+    # about 1% utilisation as already on target and stopped the tier ladder early.
+    return achieved + 1e-12 >= group.target_rate
 
 
 def _solve_group_scip(group: MaterialGroup, time_limit: float) -> dict[str, Any]:
@@ -1854,6 +1878,7 @@ def _length_shortfall_result(group: MaterialGroup, elapsed: float) -> dict[str, 
     result["warnings"].append(
         f"GROUP_UNSOLVED: LENGTH_SHORTFALL deficit={from_units(deficit)}mm"
     )
+    result["metrics"]["infeasibility_proved"] = True
     return result
 
 
@@ -1941,6 +1966,11 @@ def _solve_problem(
         # Engine "v4": V3 arc-flow global integer model + classifier routing.
         # Same contract as route3 — returns None (never raises) on infeasible/no
         # solution, then falls through to baseline so it can only help.
+        if engine == "lexcg":
+            from . import lexcg
+
+            groups.append(lexcg.solve_group(group, budget))
+            continue
         if engine == "v4" and has_scip:
             try:
                 from . import route_v4_arcflow
@@ -2021,11 +2051,14 @@ def solve_payload(
     mutates ``payload`` and returns JSON-serialisable Python primitives.
 
     ``engine`` selects the primary solver: ``baseline`` (graded-relaxation MILP,
-    the default), ``route3`` (legacy set-covering ILP), ``v4`` (arc-flow +
+    the default), ``lexcg`` (budgeted column generation with lexicographic
+    locks), ``route3`` (legacy set-covering ILP), ``v4`` (arc-flow +
     classifier routing), ``global`` (phased joint cut+weld ILP with util
     floor), or ``rcg`` (two-stage row-and-column generation).
     ``rcg``/``route3``/``v4``/``global`` fall back to baseline per group when
-    they find no solution within ``time_limit_seconds``.
+    they find no solution within ``time_limit_seconds``.  ``lexcg`` does not:
+    a truncated pricing run stays an unproved incumbent or an unproved
+    unsolved group, and is never relabelled as the baseline.
     """
 
     if time_limit_seconds <= 0 or not math.isfinite(time_limit_seconds):
@@ -2075,14 +2108,26 @@ def solve_payload(
     unsolved_group_count = sum(
         1 for group in groups if group["metrics"].get("solve_status") == "UNSOLVED"
     )
+    # Missing flag means the historical solvers, which treat UNSOLVED as the
+    # infeasible bucket.  lexcg sets the flag False when pricing stopped early.
+    proved_unsolved_count = sum(
+        1
+        for group in groups
+        if group["metrics"].get("solve_status") == "UNSOLVED"
+        and group["metrics"].get("infeasibility_proved", True)
+    )
     all_core_optimal = all(
         group["metrics"].get("core_lexicographic_optimal", False) for group in groups
     )
     all_lexicographic_optimal = all(
         group["metrics"].get("lexicographic_optimal", False) for group in groups
     )
-    if unsolved_group_count:
-        status = "PARTIAL" if unsolved_group_count < len(groups) else "INFEASIBLE"
+    if unsolved_group_count and unsolved_group_count < len(groups):
+        status = "PARTIAL"
+    elif unsolved_group_count and proved_unsolved_count == len(groups):
+        status = "INFEASIBLE"
+    elif unsolved_group_count:
+        status = "UNSOLVED"
     else:
         status = "TARGET_REACHED" if all_target else "FEASIBLE"
     return {

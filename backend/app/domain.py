@@ -24,11 +24,10 @@ LENGTH_QUANTUM_MM = Decimal(1)
 # target utilisation.  Both are configurable per payload (global) and per group.
 DEFAULT_WELD_INTERVAL_MM = 3000
 DEFAULT_MAX_JOINTS_CAP = 13
-# Cutting kerf (saw width) defaults to zero because the field MOM export and the
-# incumbent nesting software both plan cut lengths kerf-free -- any real blade
-# loss is already folded into the part lengths.  Callers that must model a
-# physical kerf pass ``BladeMargin`` explicitly.
-DEFAULT_BLADE_MARGIN_MM = 0
+# Saw kerf.  The solver and the independent verifier must use the same default
+# when a payload omits BladeMargin.  Shop practice for this project is 5 mm,
+# charged BETWEEN_PARTS (n segments cost n-1 cuts) and not included in part length.
+DEFAULT_BLADE_MARGIN_MM = 5
 
 
 def _decimal(value: Any, *, field_name: str) -> Decimal:
@@ -304,29 +303,13 @@ def _parse_pipe(
     input_joints = _nonnegative_int(
         max_joints_raw, field_name=f"{prefix}.Max_Weldingjoint_Number"
     )
-    # A splice weld is only permitted on a straight section (enforced per-position
-    # at solve time by ``_legal_pattern`` via forbidden zones and adjacency rules)
-    # and never above the hard cap.  The input value is treated as an upper bound
-    # only: a placeholder such as 2000 is silently clamped by the process rule.
-    #
-    # ``length // weld_interval`` bounds how many splice welds a tube may carry.
-    # The default interval must be small enough to reproduce the incumbent
-    # software's behaviour -- it splices a 5173mm tube with two joints, which a
-    # coarse 3000mm interval would wrongly cap at one -- yet large enough not to
-    # invite pathological "shatter" packings (e.g. cutting a 17310mm tube into
-    # thirteen 1331mm slivers) that waste material once max_joints is high.  A
-    # tube shorter than one interval can still be spliced from two stock pieces
-    # (shop practice for nesting short tubes), so keep at least a single joint.
-    process_limit = min(length // weld_interval, max_joints_cap)
-    if process_limit == 0 and input_joints >= 1 and max_joints_cap >= 1:
-        process_limit = 1
-    max_joints = min(input_joints, process_limit)
-    if input_joints > process_limit:
-        pipe_warnings.append(
-            f"{prefix}.Max_Weldingjoint_Number={input_joints} exceeds the process "
-            f"limit {process_limit} (length {from_units(length)}mm / interval "
-            f"{from_units(weld_interval)}mm, cap {max_joints_cap}); using {max_joints}"
-        )
+    # Joint limit is the input value itself.  A placeholder such as 2000 means
+    # "no practical limit" and must not be clamped by ``length // Weld_Interval_mm``
+    # or ``Max_Joints_Cap`` — the legacy shop software does not apply that cap.
+    # Search routines still carry their own node budgets so a large limit cannot
+    # turn candidate generation into an unbounded enumeration.
+    del weld_interval, max_joints_cap
+    max_joints = input_joints
 
     intervals: list[Interval] = []
     for area_index, area in enumerate(_normalize_unweldable_area(raw.get("Unweldable_Area"))):
@@ -469,6 +452,22 @@ def _parse_stocks(
     )
 
 
+def _lookup_blade_margin(
+    container: Mapping[str, Any],
+    nest_param: Mapping[str, Any],
+    path,
+) -> tuple[Any, str] | None:
+    """Read BladeMargin, including the corpus spelling ``Blademargin``."""
+
+    for key in ("BladeMargin", "Blademargin", "blade_margin"):
+        if key in nest_param:
+            return nest_param[key], path(f"NestParam.{key}")
+    for key in ("BladeMargin", "Blademargin", "blade_margin"):
+        if key in container:
+            return container[key], path(key)
+    return None
+
+
 def _payload_root(
     payload: Mapping[str, Any],
 ) -> tuple[Mapping[str, Any], list[Mapping[str, Any]], str, list[str]]:
@@ -510,14 +509,11 @@ def parse_problem(payload: dict[str, Any]) -> NestingProblem:
     path = lambda name: f"{root_path}.{name}" if root_path else name
     global_normalizations: list[InputNormalization] = []
     nest_param = root.get("NestParam") if isinstance(root.get("NestParam"), Mapping) else {}
-    blade_margin_raw = nest_param.get(
-        "BladeMargin", root.get("BladeMargin", DEFAULT_BLADE_MARGIN_MM)
-    )
-    blade_margin_path = (
-        path("NestParam.BladeMargin")
-        if "BladeMargin" in nest_param
-        else path("BladeMargin")
-    )
+    located = _lookup_blade_margin(root, nest_param, path)
+    if located is None:
+        blade_margin_raw, blade_margin_path = DEFAULT_BLADE_MARGIN_MM, path("BladeMargin")
+    else:
+        blade_margin_raw, blade_margin_path = located
     blade_margin = to_units(
         blade_margin_raw,
         field_name=blade_margin_path,
@@ -548,10 +544,9 @@ def parse_problem(payload: dict[str, Any]) -> NestingProblem:
     if min_cut_length < 0:
         raise ValueError(f"{path('Min_Cut_Length')} must be non-negative")
 
-    # Process rule (JB/T 6509 family): a serpentine tube may carry at most one
-    # splice weld per Weld_Interval_mm of overall length, and never more than
-    # Max_Joints_Cap regardless of length.  These bound the joint count so that
-    # candidate generation cannot explode on placeholder inputs such as 2000.
+    # Weld_Interval_mm and Max_Joints_Cap are still parsed so older payloads stay
+    # valid, but they no longer clamp Max_Weldingjoint_Number.  A value of 2000
+    # means the joint count is unlimited; search budgets live in the solver.
     weld_interval = to_units(
         root.get("Weld_Interval_mm", DEFAULT_WELD_INTERVAL_MM),
         field_name=path("Weld_Interval_mm"),
@@ -619,18 +614,12 @@ def parse_problem(payload: dict[str, Any]) -> NestingProblem:
             if isinstance(raw_group.get("NestParam"), Mapping)
             else {}
         )
-        group_blade_raw = group_nest_param.get(
-            "BladeMargin", raw_group.get("BladeMargin", blade_margin_raw)
-        )
-        group_blade_path = (
-            f"{group_path}.NestParam.BladeMargin"
-            if "BladeMargin" in group_nest_param
-            else (
-                f"{group_path}.BladeMargin"
-                if "BladeMargin" in raw_group
-                else blade_margin_path
-            )
-        )
+        group_path_of = lambda name: f"{group_path}.{name}" if group_path else name
+        located_group = _lookup_blade_margin(raw_group, group_nest_param, group_path_of)
+        if located_group is None:
+            group_blade_raw, group_blade_path = blade_margin_raw, blade_margin_path
+        else:
+            group_blade_raw, group_blade_path = located_group
         group_blade = to_units(
             group_blade_raw,
             field_name=group_blade_path,
