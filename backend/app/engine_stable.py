@@ -53,6 +53,10 @@ STABLE_DEFAULT_BLADE_MARGIN_MM = 5
 # Added after every existing strategy has failed. Never subtracted from
 # the strategy-chain limit. Zero skips the stage.
 STABLE_CPSAT_TIME_LIMIT_SECONDS = 15.0
+# Independent clock for on-demand patterns, after the catalogue stage.
+# Zero skips the stage. It is not taken out of the strategy chain or the
+# catalogue budget.
+STABLE_ONDEMAND_TIME_LIMIT_SECONDS = 60.0
 _NO_INTERVAL_CAP = 1
 _JOINT_CAP = 1_000_000
 
@@ -64,6 +68,14 @@ _ENFORCE_MUST = contextvars.ContextVar("stable_enforce_must_use", default=False)
 # Independent seconds for the last-stage catalogue search. None selects
 # STABLE_CPSAT_TIME_LIMIT_SECONDS. The strategy chain does not read this.
 _CPSAT_LIMIT = contextvars.ContextVar("stable_cpsat_limit", default=None)
+# Independent seconds for on-demand pattern generation. None selects
+# STABLE_ONDEMAND_TIME_LIMIT_SECONDS. Earlier stages do not read this.
+_ONDEMAND_LIMIT = contextvars.ContextVar("stable_ondemand_limit", default=None)
+# Remaining on-demand seconds shared by every material group of one case.
+# None means a direct group call uses the full configured budget once.
+_ONDEMAND_LEFT: contextvars.ContextVar[dict[str, float] | None] = contextvars.ContextVar(
+    "stable_ondemand_left", default=None
+)
 
 
 class _Timeout(Exception):
@@ -2552,9 +2564,9 @@ def _strategy_short_stock_split(group: MaterialGroup, deadline: float) -> dict[s
 def _strategies() -> list[tuple[str, str, Strategy]]:
     """(name, result_source, function). Order is the feasibility search order.
 
-    This list is the previous round's chain. The catalogue search is not a
-    member: it starts only after every function here has returned no plan,
-    on a clock that is not this chain's deadline.
+    This list is the previous round's chain. The catalogue search and the
+    on-demand search are not members: each starts only after every function
+    here has returned no plan, on a clock that is not this chain's deadline.
     """
 
     return [
@@ -2709,6 +2721,7 @@ def _solve_group_stable_body(
             found = _mark_feasible(found, name, source)
             found["metrics"]["elapsed_seconds"] = round(time.monotonic() - started, 6)
             found["metrics"]["cpsat_elapsed_seconds"] = 0.0
+            found["metrics"]["ondemand_elapsed_seconds"] = 0.0
             return found
     # Every existing strategy has now returned no plan. The catalogue
     # search starts here, on its own clock, and does not change the
@@ -2718,17 +2731,36 @@ def _solve_group_stable_body(
         found = _mark_feasible(found, "cpsat-feasibility", "cpsat")
         found["metrics"]["elapsed_seconds"] = round(time.monotonic() - started, 6)
         found["metrics"]["cpsat_elapsed_seconds"] = round(cpsat_elapsed, 6)
+        found["metrics"]["ondemand_elapsed_seconds"] = 0.0
+        return found
+    # Catalogue search found nothing. On-demand patterns start here, on a
+    # third clock, and do not change the deadlines already consumed above.
+    found, ondemand_elapsed, ondemand_timeout = _ondemand_last_stage(group)
+    if found is not None:
+        found = _mark_feasible(found, "ondemand-pricing", "ondemand")
+        found["metrics"]["elapsed_seconds"] = round(time.monotonic() - started, 6)
+        found["metrics"]["cpsat_elapsed_seconds"] = round(cpsat_elapsed, 6)
+        found["metrics"]["ondemand_elapsed_seconds"] = round(ondemand_elapsed, 6)
         return found
     detail = ",".join(tried)
     if errors:
         detail += "；错误 " + " | ".join(errors[-3:])
     from .engine_stable_cpsat import cpsat_note
+    from .engine_stable_ondemand import ondemand_note
 
     note = cpsat_note()
-    if cpsat_timeout:
+    extra = ondemand_note()
+    if ondemand_timeout:
+        failure_class = "TIMEOUT_NO_SOLUTION"
+        message = "现有策略和目录 CP-SAT 均未找到可行解，按需生成在独立时限内未知：" + detail
+    elif cpsat_timeout and _ondemand_budget() <= 0:
         failure_class = "TIMEOUT_NO_SOLUTION"
         message = "现有策略均未找到可行解，CP-SAT 兜底在独立时限内未知：" + detail
-    elif _cpsat_budget() <= 0 and time.monotonic() >= deadline:
+    elif (
+        _cpsat_budget() <= 0
+        and _ondemand_budget() <= 0
+        and time.monotonic() >= deadline
+    ):
         failure_class = "TIMEOUT_NO_SOLUTION"
         message = "时限内没有可行解：" + detail
     else:
@@ -2738,8 +2770,12 @@ def _solve_group_stable_body(
             message = gap + "；" + message
     if note:
         message = message + "；" + note
+    if extra:
+        message = message + "；" + extra
     failed = _fail_group(group, failure_class, message, time.monotonic() - started)
     failed["metrics"]["cpsat_elapsed_seconds"] = round(cpsat_elapsed, 6)
+    failed["metrics"]["ondemand_elapsed_seconds"] = round(ondemand_elapsed, 6)
+    failed["metrics"]["ondemand_note"] = extra
     return failed
 
 
@@ -2771,6 +2807,50 @@ def _cpsat_last_stage(group: MaterialGroup) -> tuple[dict[str, Any] | None, floa
     return found, time.monotonic() - started, False
 
 
+def _ondemand_budget() -> float:
+    raw = _ONDEMAND_LIMIT.get()
+    if raw is None:
+        return STABLE_ONDEMAND_TIME_LIMIT_SECONDS
+    return float(raw)
+
+
+def _ondemand_last_stage(group: MaterialGroup) -> tuple[dict[str, Any] | None, float, bool]:
+    """On-demand patterns after the catalogue stage.
+
+    Returns ``(plan or None, seconds spent, timed_out)``. Exhausting the
+    bounded pattern family is not a proof, so this function does not raise
+    a stock-gap failure.
+    """
+
+    from .engine_stable_ondemand import (
+        mark_ondemand_timeout,
+        reset_ondemand_note,
+        solve_group_ondemand,
+    )
+
+    configured = _ondemand_budget()
+    if configured <= 0:
+        reset_ondemand_note()
+        return None, 0.0, False
+    cell = _ONDEMAND_LEFT.get()
+    left = configured if cell is None else float(cell["remaining"])
+    if left <= 0:
+        mark_ondemand_timeout()
+        return None, 0.0, True
+    started = time.monotonic()
+    try:
+        found = solve_group_ondemand(group, started + left)
+    except _Timeout:
+        spent = time.monotonic() - started
+        if cell is not None:
+            cell["remaining"] = max(0.0, cell["remaining"] - spent)
+        return None, spent, True
+    spent = time.monotonic() - started
+    if cell is not None:
+        cell["remaining"] = max(0.0, cell["remaining"] - spent)
+    return found, spent, False
+
+
 def solve_stable_problem(
     problem: NestingProblem,
     time_limit_seconds: float,
@@ -2778,6 +2858,7 @@ def solve_stable_problem(
     checkpoint_path: str | None = None,
     enforce_must_use: bool | None = None,
     cpsat_time_limit: float | None = None,
+    ondemand_time_limit: float | None = None,
 ) -> list[dict[str, Any]]:
     if enforce_must_use is None:
         from .verifier import must_use_enforced
@@ -2795,7 +2876,13 @@ def solve_stable_problem(
         return groups
     if cpsat_time_limit is None:
         cpsat_time_limit = STABLE_CPSAT_TIME_LIMIT_SECONDS
+    if ondemand_time_limit is None:
+        ondemand_time_limit = STABLE_ONDEMAND_TIME_LIMIT_SECONDS
     cpsat_token = _CPSAT_LIMIT.set(cpsat_time_limit)
+    ondemand_token = _ONDEMAND_LIMIT.set(ondemand_time_limit)
+    # One case shares this budget across material groups. It starts only
+    # when a group reaches the on-demand stage, and it is not the chain clock.
+    left_token = _ONDEMAND_LEFT.set({"remaining": float(ondemand_time_limit)})
     started = time.monotonic()
     deadline = started + max(time_limit_seconds, 0.0)
     try:
@@ -2808,6 +2895,8 @@ def solve_stable_problem(
             enforce_must_use=bool(enforce_must_use),
         )
     finally:
+        _ONDEMAND_LEFT.reset(left_token)
+        _ONDEMAND_LIMIT.reset(ondemand_token)
         _CPSAT_LIMIT.reset(cpsat_token)
 
 
@@ -2835,7 +2924,9 @@ def _solve_stable_groups(
         # The catalogue stage spends wall time after the chain. Give that
         # time back so the next group's existing strategies keep their share
         # of the original limit.
-        deadline += float((result.get("metrics") or {}).get("cpsat_elapsed_seconds") or 0.0)
+        metrics = result.get("metrics") or {}
+        deadline += float(metrics.get("cpsat_elapsed_seconds") or 0.0)
+        deadline += float(metrics.get("ondemand_elapsed_seconds") or 0.0)
         groups.append(result)
         state["groups"] = groups
         state["strategies_done"] = []
