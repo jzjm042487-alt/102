@@ -22,7 +22,13 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
 
-from .domain import MaterialGroup, NestingProblem, PipeDemand, from_units
+from .domain import (
+    MaterialGroup,
+    NestingProblem,
+    PipeDemand,
+    _normalize_unweldable_area,
+    from_units,
+)
 from .solver import (
     _Bar,
     _CutCandidate,
@@ -71,6 +77,39 @@ def _apply_process_rules(node: dict[str, Any]) -> None:
     node["Max_Joints_Cap"] = _JOINT_CAP
 
 
+def _order_forbidden_zones(pipe: dict[str, Any]) -> None:
+    """Swap reversed forbidden-zone endpoints before solve and verify.
+
+    The domain parser already treats end-before-start as an ordering slip.
+    The verifier records that slip as an error, so the stable payload fixes
+    it once and both sides see the same intervals.
+    """
+
+    raw = pipe.get("Unweldable_Area", pipe.get("unweldable_area"))
+    areas = _normalize_unweldable_area(raw)
+    if not areas:
+        return
+    ordered: list[Any] = []
+    changed = False
+    for area in areas:
+        if isinstance(area, (list, tuple)) and len(area) >= 2:
+            try:
+                start = float(area[0])
+                end = float(area[1])
+            except (TypeError, ValueError):
+                ordered.append(list(area))
+                continue
+            if start > end:
+                ordered.append([area[1], area[0]])
+                changed = True
+            else:
+                ordered.append(list(area[:2]))
+        else:
+            ordered.append(area)
+    if changed or isinstance(raw, str):
+        pipe["Unweldable_Area"] = ordered
+
+
 def _clean_pipes(group: dict[str, Any]) -> None:
     """Drop non-positive demand and repeated pipe identities.
 
@@ -104,6 +143,7 @@ def _clean_pipes(group: dict[str, Any]) -> None:
             continue
         copy = dict(pipe)
         copy["pipe_demand"] = demand
+        _order_forbidden_zones(copy)
         merged[key] = copy
         order.append(key)
     group["Pipe"] = [merged[key] for key in order]

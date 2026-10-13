@@ -74,6 +74,13 @@ def test_prepare_keeps_explicit_blade_and_defaults_missing_blade() -> None:
     assert prepared_missing["input"]["NestParam"]["BladeMargin"] == 5
 
 
+def test_reversed_forbidden_zone_still_verifies() -> None:
+    payload = deepcopy(_load(FIXTURES / "valid_case.json")["problem"])
+    pipe = payload["input"]["data"][0]["Pipe"][0]
+    pipe["Unweldable_Area"] = [[0, 100], [1000, 900]]
+    _verified_stable(payload, 15)
+
+
 def test_length_shortfall_is_stock_gap_not_optimal() -> None:
     payload = _load(FIXTURES / "valid_case.json")["problem"]
     payload = deepcopy(payload)
