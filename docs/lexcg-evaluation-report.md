@@ -4,7 +4,7 @@
 
 `engine=lexcg` 已接入 `solve_payload`。词典序是用料总长、接头总数、有序拼法种类、切法种类。目标利用率只记录，不作为硬约束。本轮没有改求解算法，只把评测补到全量。
 
-评测仍在进行。CSV 现有 lexcg 45 行、baseline 43 行，两边都到齐的案例 43 / 1589。下面的胜负只统计已经写进 CSV 的行，没有把未跑的案例算成失败。
+评测仍在进行。CSV 现有 lexcg 84 行、baseline 84 行，两边都到齐的案例 84 / 1589。下面的胜负只统计已经写进 CSV 的行，没有把未跑的案例算成失败。
 
 默认引擎仍是 `baseline`。是否改默认要等全量两边都跑完再判断；未完成时不切换。
 
@@ -38,10 +38,10 @@
 
 | 引擎 | 已有行 | 解出且验证通过 | 覆盖率（相对 1589） |
 | --- | ---: | ---: | ---: |
-| lexcg | 45 | 36 | 2.3% |
-| baseline | 43 | 38 | 2.4% |
+| lexcg | 84 | 65 | 4.1% |
+| baseline | 84 | 74 | 4.7% |
 
-lexcg 已覆盖结果的来源：native 24，warm-start-assisted 12。其中四层都是 proved 的 0 条。
+lexcg 已覆盖结果的来源：native 37，warm-start-assisted 28。其中四层都是 proved 的 0 条。
 
 ## 相对老软件的词典序
 
@@ -49,37 +49,37 @@ lexcg 已覆盖结果的来源：native 24，warm-start-assisted 12。其中四�
 
 | 引擎 | 胜 | 平 | 负 | 不可比 |
 | --- | ---: | ---: | ---: | ---: |
-| lexcg | 19 | 3 | 14 | 9 |
-| baseline | 9 | 3 | 26 | 5 |
+| lexcg | 34 | 8 | 23 | 19 |
+| baseline | 16 | 7 | 51 | 10 |
 
 利用率（高者更好，只在已覆盖的行上比较）：
 
 | 引擎 | 高于老软件 | 相同 | 低于老软件 |
 | --- | ---: | ---: | ---: |
-| lexcg | 10 | 17 | 9 |
-| baseline | 6 | 13 | 19 |
+| lexcg | 18 | 28 | 19 |
+| baseline | 9 | 21 | 44 |
 
 ## 相对 baseline 的词典序
 
-两边都已有行的案例 43 条。两边都验证通过时：lexcg 胜 27，平 8，负 0。用料更短：lexcg 19，baseline 0，相同 16。利用率更高：lexcg 19，baseline 0，相同 16。
+两边都已有行的案例 84 条。两边都验证通过时：lexcg 胜 47，平 16，负 1。用料更短：lexcg 33，baseline 1，相同 30。利用率更高：lexcg 33，baseline 1，相同 30。
 
-只有 lexcg 覆盖 1 条，只有 baseline 覆盖 3 条，两边都没覆盖 4 条。
+只有 lexcg 覆盖 1 条，只有 baseline 覆盖 10 条，两边都没覆盖 9 条。
 
 ## 失败与超时
 
 类别含义：`timeout` 进程被杀掉；`error` 求解抛错或子进程没交回结果；`verifier_failed` 有方案但验证器拒绝；`infeasible` 求解器声明不可行；`unsolved_pricing_truncated` 定价预算用尽后仍无整数解；`unsolved` 无整数解且没有截断标志。
 
-lexcg 类别计数：{'solved_verified': 36, 'unsolved_pricing_truncated': 8, 'unsolved': 1}
+lexcg 类别计数：{'solved_verified': 65, 'unsolved_pricing_truncated': 17, 'unsolved': 2}
 
-baseline 类别计数：{'solved_verified': 38, 'infeasible': 5}
+baseline 类别计数：{'solved_verified': 74, 'infeasible': 10}
 
 ### lexcg
 
-- `unsolved`：1 条。51abd2ad-4478-4b56-968f-45664e5f1705
-- `unsolved_pricing_truncated`：8 条。ebf13527-e604-4554-a673-6d5507742f32, 6a4fecf7-d070-4629-8bcc-a0ffa5c3b091, e7838732-3b59-4716-9ca3-3a7a952f6e1c, 95947fc1-483a-434d-95f2-a656981d8fd0, d63121ee-fe51-4908-8aae-c41d363667bd, 074b9061-230a-4888-b404-32aa8af28fe5, 7defcea0-5095-45cf-9b6f-0e033b027791, eabf2b06-3921-43bb-995b-2f7d99b00760
+- `unsolved`：2 条。51abd2ad-4478-4b56-968f-45664e5f1705, be8163b2-5866-416a-b5db-1ea9c9544c18
+- `unsolved_pricing_truncated`：17 条。ebf13527-e604-4554-a673-6d5507742f32, 6a4fecf7-d070-4629-8bcc-a0ffa5c3b091, e7838732-3b59-4716-9ca3-3a7a952f6e1c, 95947fc1-483a-434d-95f2-a656981d8fd0, d63121ee-fe51-4908-8aae-c41d363667bd, 074b9061-230a-4888-b404-32aa8af28fe5, 7defcea0-5095-45cf-9b6f-0e033b027791, eabf2b06-3921-43bb-995b-2f7d99b00760, 9cfd3c61-da57-4e78-9d39-ecba829379f7, 6ab108c0-2dd1-4401-8824-d5c576af6d15, 48afa095-f8ec-42d1-901e-a42c9fccc443, 17e6b0d4-c343-4c70-aef3-7bb2bf23cd77, 42b9c5fc-c84a-4468-a15b-d6d8e01bbd7c, a63b97c6-f6d5-4587-b200-f84ed7f0f1de, 581e3490-7831-45c6-9518-006a56871141, 7faf8533-d544-4ef8-9e72-a302e90e0a73, 7d09b887-c05c-4956-a06c-6faae3e7ff62
 
 ### baseline
 
-- `infeasible`：5 条。6a4fecf7-d070-4629-8bcc-a0ffa5c3b091, ba90d3b8-ddea-4135-a31c-9b93abf9e455, e7838732-3b59-4716-9ca3-3a7a952f6e1c, d63121ee-fe51-4908-8aae-c41d363667bd, 51abd2ad-4478-4b56-968f-45664e5f1705
+- `infeasible`：10 条。6a4fecf7-d070-4629-8bcc-a0ffa5c3b091, ba90d3b8-ddea-4135-a31c-9b93abf9e455, e7838732-3b59-4716-9ca3-3a7a952f6e1c, d63121ee-fe51-4908-8aae-c41d363667bd, 51abd2ad-4478-4b56-968f-45664e5f1705, 7defcea0-5095-45cf-9b6f-0e033b027791, eabf2b06-3921-43bb-995b-2f7d99b00760, 6ab108c0-2dd1-4401-8824-d5c576af6d15, 17e6b0d4-c343-4c70-aef3-7bb2bf23cd77, 581e3490-7831-45c6-9518-006a56871141
 
 明细：`docs/lexcg-corpus-results.csv`。
