@@ -55,6 +55,7 @@ _COARSE_TWOS = 8
 _FINE_TWOS = 12
 _GRID_RADIUS = 40
 _COMPLEMENT_WINDOW = 1
+_WINDOWS = (1, 8, 40)
 _COMPLEMENT_KEEP = 48
 _MAX_ZONES = 32
 _MAX_STOCK_ANCHORS = 24
@@ -109,12 +110,17 @@ def _search(group: MaterialGroup, deadline: float) -> dict | None:
 
     fine = _small_group(group)
     menus = _seed_menus(group, fine=fine)
+    dropped: set[int] = set()
+    introduced: set[int] = set()
     tried_longer = False
+    window_index = 0
     for round_index in range(1, _MAX_ROUNDS + 1):
         _ensure_time(deadline)
-        if any(not menu for menu in menus):
-            status, plan = "infeasible", None
-        else:
+        introduced.clear()
+        _reuse_patterns(group, menus, deadline)
+        covered = all(menus)
+        status, plan = "infeasible", None
+        if covered:
             status, plan = _solve_master(group, menus, deadline, cp_model)
             if plan is not None:
                 _NOTE.set("")
@@ -131,14 +137,27 @@ def _search(group: MaterialGroup, deadline: float) -> dict | None:
                     raise _Timeout
         if status == "broken":
             return None
-        added = _price_two_pieces(group, menus, deadline)
+        window = _WINDOWS[min(window_index, len(_WINDOWS) - 1)]
+        added = _price_two_pieces(
+            group, menus, deadline, window=window, introduced=introduced, dropped=dropped
+        )
+        if not added and not tried_longer:
+            tried_longer = True
+            added = _add_longer_patterns(
+                group, menus, deadline, introduced=introduced, dropped=dropped
+            )
         if added:
             continue
-        if not tried_longer:
-            tried_longer = True
-            if _add_longer_patterns(group, menus, deadline):
-                continue
-        _NOTE.set(_gap_text(round_index, fine))
+        if window_index + 1 < len(_WINDOWS):
+            window_index += 1
+            continue
+        if any(not menu for menu in menus):
+            _NOTE.set(
+                _gap_text(round_index, fine)
+                + "至少一根管子在段长种类上限内没有合法拼法。"
+            )
+        else:
+            _NOTE.set(_gap_text(round_index, fine))
         return None
     _NOTE.set(_gap_text(_MAX_ROUNDS, fine))
     return None
@@ -151,7 +170,7 @@ def _gap_text(rounds: int, fine: bool) -> str:
         f"限制为段长种类不超过{_MAX_ALPHABET}、最多{_MAX_ROUNDS}轮、"
         f"每轮最多{_NEW_LENGTHS}种新段长、每管最多{_MAX_PATTERNS}个拼法、"
         f"切法列不超过{_COLUMN_CAP}，焊口用{grid}离散网格、禁焊区端点外移 1mm "
-        "和定尺互补，不是连续整数位置。"
+        "和定尺互补，不是连续整数位置。字母表已满时替换出现次数最少、且删去后仍给每根管子留下拼法的段长。"
         f"已完成{rounds}轮。这不是订单不可行的证明。"
     )
 
@@ -210,8 +229,15 @@ def _seed_menus(group: MaterialGroup, *, fine: bool) -> list[list[tuple[int, ...
         for stock in _anchor_stocks(stocks, pipe.length):
             add(_windowed_two_piece(pipe, group, stock, _COMPLEMENT_WINDOW))
             add(_windowed_two_piece(pipe, group, pipe.length - stock, _COMPLEMENT_WINDOW))
+        if max_stock and pipe.length > max_stock:
+            need = (pipe.length + max_stock - 1) // max_stock
+            upper = min(pipe.max_joints + 1, max(need, 2) + 2, 5)
+            for pieces in range(max(need, 3), upper + 1):
+                add(_uniform_parts(pipe, group, pieces))
+                for stock in _anchor_stocks(stocks, pipe.length):
+                    add(_stock_peel(pipe, group, stock, pieces))
         menus.append(_keep(found, whole, two_cap, set(stocks)))
-    return _limit_alphabet(menus)
+    return _limit_alphabet(menus, set(stocks))
 
 
 def _keep(
@@ -230,10 +256,14 @@ def _keep(
         aligned = sum(1 for part in parts if part in stock_lengths)
         return (aligned, len(parts), parts)
 
-    ranked = sorted(found, key=sort_key)
+    multis = [parts for parts in found if len(parts) >= 3][:4]
+    ranked = sorted((parts for parts in found if len(parts) < 3), key=sort_key)
     kept: list[tuple[int, ...]] = []
     if whole is not None and whole in found:
         kept.append(whole)
+    for parts in multis:
+        if parts not in kept:
+            kept.append(parts)
     for parts in ranked:
         if parts in kept:
             continue
@@ -284,19 +314,19 @@ def _anchor_stocks(stocks: list[int], pipe_length: int) -> list[int]:
 
 def _limit_alphabet(
     menus: list[list[tuple[int, ...]]],
+    stock_lengths: set[int],
 ) -> list[list[tuple[int, ...]]]:
     """Keep at most ``_MAX_ALPHABET`` distinct piece lengths.
 
-    Patterns are admitted one pipe at a time so the first pipe cannot fill
-    the alphabet alone. A pattern that would add an extra length after the
-    cap is skipped; the pipe keeps any earlier pattern that already fit.
+    A pipe with no pattern is served before a pipe that already has one, and
+    a pattern that reuses lengths already chosen is preferred. Otherwise the
+    first pipes fill the alphabet and later pipes never reach the master.
     """
 
     chosen: list[list[tuple[int, ...]]] = [[] for _ in menus]
     used: set[int] = set()
-    progress = True
-    while progress:
-        progress = False
+    while True:
+        best: tuple | None = None
         for pipe_index, menu in enumerate(menus):
             if len(chosen[pipe_index]) >= _MAX_PATTERNS:
                 continue
@@ -304,28 +334,223 @@ def _limit_alphabet(
                 if parts in chosen[pipe_index]:
                     continue
                 extra = {part for part in parts if part not in used}
-                if extra and len(used) + len(extra) > _MAX_ALPHABET:
+                if len(used) + len(extra) > _MAX_ALPHABET:
                     continue
-                chosen[pipe_index].append(parts)
-                used.update(parts)
-                progress = True
-                break
+                aligned = sum(1 for part in parts if part in stock_lengths)
+                cand = (
+                    0 if not chosen[pipe_index] else 1,
+                    len(extra),
+                    aligned,
+                    len(parts),
+                    pipe_index,
+                    parts,
+                )
+                if best is None or cand < best:
+                    best = cand
+        if best is None:
+            break
+        pipe_index = best[-2]
+        parts = best[-1]
+        chosen[pipe_index].append(parts)
+        used.update(parts)
     return chosen
+
+
+def _stock_peel(
+    pipe: PipeDemand, group: MaterialGroup, stock: int, pieces: int
+) -> tuple[int, ...] | None:
+    """Place ``pieces - 1`` welds near multiples of one stock length."""
+
+    if pieces < 2 or pieces - 1 > pipe.max_joints or stock <= 0:
+        return None
+    margin = _min_part(group, multi=True)
+    max_stock = max(item.length for item in group.stocks)
+    positions: list[int] = []
+    cursor = 0
+    for index in range(pieces - 1):
+        target = cursor + stock
+        if target <= cursor or target >= pipe.length:
+            return None
+        later = pieces - index - 1
+        hi = min(pipe.length - margin * later, target + _GRID_RADIUS, max_stock + cursor)
+        lo = max(cursor + margin, target - _GRID_RADIUS)
+        if lo > hi:
+            return None
+        weld = _snap_weld(pipe, target, lo, hi)
+        if weld is None or weld <= cursor:
+            return None
+        positions.append(weld)
+        cursor = weld
+    parts: list[int] = []
+    previous = 0
+    for position in positions:
+        parts.append(position - previous)
+        previous = position
+    parts.append(pipe.length - previous)
+    result = tuple(parts)
+    if max(result) > max_stock:
+        return None
+    return result if _acceptable(pipe, group, result) else None
 
 
 def _alphabet(menus: list[list[tuple[int, ...]]]) -> set[int]:
     return {part for menu in menus for parts in menu for part in parts}
 
 
-def _price_two_pieces(
+def _reuse_patterns(
     group: MaterialGroup,
     menus: list[list[tuple[int, ...]]],
     deadline: float,
 ) -> bool:
+    """Add welds whose every piece is already in the alphabet."""
+
+    alphabet = _alphabet(menus)
+    if not alphabet:
+        return False
+    added = False
+    ordered = tuple(sorted(alphabet))
+    for pipe_index, pipe in enumerate(group.pipes):
+        _ensure_time(deadline)
+        existing = set(menus[pipe_index])
+        if pipe.max_joints >= 1:
+            for left in ordered:
+                if len(menus[pipe_index]) >= _MAX_PATTERNS:
+                    break
+                right = pipe.length - left
+                if right not in alphabet or right <= 0:
+                    continue
+                parts = _windowed_two_piece(pipe, group, left, _COMPLEMENT_WINDOW)
+                if parts is None or parts in existing or not set(parts) <= alphabet:
+                    continue
+                menus[pipe_index].append(parts)
+                existing.add(parts)
+                added = True
+        if pipe.max_joints < 2:
+            continue
+        for left in ordered:
+            if len(menus[pipe_index]) >= _MAX_PATTERNS:
+                break
+            for middle in ordered:
+                tail = pipe.length - left - middle
+                if tail not in alphabet or tail <= 0:
+                    continue
+                parts = _chain_parts(pipe, group, (left, middle, tail))
+                if parts is None or parts in existing:
+                    continue
+                menus[pipe_index].append(parts)
+                existing.add(parts)
+                added = True
+                if len(menus[pipe_index]) >= _MAX_PATTERNS:
+                    break
+    return added
+
+
+def _chain_parts(
+    pipe: PipeDemand, group: MaterialGroup, parts: tuple[int, ...]
+) -> tuple[int, ...] | None:
+    if sum(parts) != pipe.length:
+        return None
+    for order in (parts, tuple(reversed(parts))):
+        if _acceptable(pipe, group, order):
+            return order
+    return None
+
+
+def _plan_drops(
+    menus: list[list[tuple[int, ...]]],
+    needed: int,
+    banned: set[int],
+    allow_empty: set[int],
+) -> list[int] | None:
+    """Lengths that can be removed without emptying a protected pipe."""
+
+    if needed <= 0:
+        return []
+    freq: Counter[int] = Counter()
+    for menu in menus:
+        for parts in menu:
+            freq.update(set(parts))
+    order = sorted((length for length in freq if length not in banned), key=lambda n: (freq[n], n))
+    chosen: list[int] = []
+    simulated = [list(menu) for menu in menus]
+    for length in order:
+        if len(chosen) >= needed:
+            break
+        nxt: list[list[tuple[int, ...]]] = []
+        ok = True
+        for index, menu in enumerate(simulated):
+            kept = [parts for parts in menu if length not in parts]
+            if menu and not kept and index not in allow_empty:
+                ok = False
+                break
+            nxt.append(kept)
+        if not ok:
+            continue
+        simulated = nxt
+        chosen.append(length)
+    if len(chosen) < needed:
+        return None
+    return chosen
+
+
+def _apply_drops(menus: list[list[tuple[int, ...]]], victims: list[int]) -> None:
+    banned = set(victims)
+    for index, menu in enumerate(menus):
+        menus[index] = [parts for parts in menu if banned.isdisjoint(parts)]
+
+
+def _admit(
+    menus: list[list[tuple[int, ...]]],
+    pipe_index: int,
+    parts: tuple[int, ...],
+    introduced: set[int],
+    dropped: set[int],
+) -> bool:
+    """Add one pattern, dropping rare lengths when the alphabet is full."""
+
+    if parts in menus[pipe_index] or len(menus[pipe_index]) >= _MAX_PATTERNS:
+        return False
+    alphabet = _alphabet(menus)
+    fresh = {part for part in set(parts) if part not in alphabet}
+    if fresh & dropped:
+        return False
+    new_slots = fresh - introduced
+    pipe_empty = not menus[pipe_index]
+    if new_slots and not (pipe_empty and not introduced and len(fresh) <= 4):
+        if len(introduced) + len(new_slots) > _NEW_LENGTHS:
+            return False
+    if len(alphabet) + len(fresh) > _MAX_ALPHABET:
+        need = len(alphabet) + len(fresh) - _MAX_ALPHABET
+        victims = _plan_drops(
+            menus,
+            need,
+            banned=introduced | fresh,
+            allow_empty={pipe_index} if pipe_empty else set(),
+        )
+        if victims is None:
+            return False
+        _apply_drops(menus, victims)
+        dropped.update(victims)
+    if parts in menus[pipe_index] or len(menus[pipe_index]) >= _MAX_PATTERNS:
+        return False
+    menus[pipe_index].append(parts)
+    introduced.update(fresh)
+    return True
+
+
+def _price_two_pieces(
+    group: MaterialGroup,
+    menus: list[list[tuple[int, ...]]],
+    deadline: float,
+    *,
+    window: int,
+    introduced: set[int],
+    dropped: set[int],
+) -> bool:
     """Add complement welds after the restricted master is infeasible.
 
-    The witness is that infeasibility. Each candidate length is the exact
-    partner of a length already used, on one of this order's own stocks.
+    The witness is that infeasibility. A full alphabet is not a reason to
+    discard the new column: rare lengths are replaced, up to the same cap.
     """
 
     _ensure_time(deadline)
@@ -339,41 +564,32 @@ def _price_two_pieces(
             piece = stock - kerf - partner
             if piece > 0:
                 scores[piece] += 1
-    if not scores:
-        return False
     shortlist = [piece for piece, _score in scores.most_common(_COMPLEMENT_KEEP)]
-    proposals: list[tuple[int, int, int, tuple[int, ...]]] = []
+    steps = 4 if window <= 1 else 8 if window <= 8 else 12
+    proposals: list[tuple[int, int, tuple[int, ...]]] = []
     for pipe_index, pipe in enumerate(group.pipes):
         _ensure_time(deadline)
         existing = set(menus[pipe_index])
-        empty_bonus = 1 if not existing else 0
+        empty_bonus = 1000 if not existing else 0
         for piece in shortlist:
+            weight = scores[piece] + empty_bonus
             for target in (piece, pipe.length - piece):
-                parts = _windowed_two_piece(pipe, group, target, _COMPLEMENT_WINDOW)
+                parts = _windowed_two_piece(pipe, group, target, window)
                 if parts is None or parts in existing:
                     continue
-                new = {part for part in parts if part not in alphabet}
-                if len(alphabet) + len(new) > _MAX_ALPHABET:
-                    continue
-                proposals.append((scores[piece] + empty_bonus, -len(new), pipe_index, parts))
-    proposals.sort(key=lambda item: (-item[0], -item[1], item[2], item[3]))
-    added_lengths: set[int] = set()
+                proposals.append((weight, pipe_index, parts))
+                existing.add(parts)
+        for weld in _grid_welds(pipe, group, stocks, steps):
+            parts = _windowed_two_piece(pipe, group, weld, window)
+            if parts is None or parts in existing:
+                continue
+            proposals.append((1 + empty_bonus, pipe_index, parts))
+            existing.add(parts)
+    proposals.sort(key=lambda item: (-item[0], item[1], item[2]))
     added = False
-    seen: set[tuple[int, tuple[int, ...]]] = set()
-    for _score, _prefer, pipe_index, parts in proposals:
-        if (pipe_index, parts) in seen:
-            continue
-        if len(menus[pipe_index]) >= _MAX_PATTERNS:
-            continue
-        new = {part for part in parts if part not in alphabet}
-        if len(added_lengths | new) > _NEW_LENGTHS and new:
-            continue
-        if len(alphabet) + len(added_lengths | new) > _MAX_ALPHABET:
-            continue
-        menus[pipe_index].append(parts)
-        seen.add((pipe_index, parts))
-        added_lengths |= new
-        added = True
+    for _score, pipe_index, parts in proposals:
+        if _admit(menus, pipe_index, parts, introduced, dropped):
+            added = True
     return added
 
 
@@ -381,29 +597,42 @@ def _add_longer_patterns(
     group: MaterialGroup,
     menus: list[list[tuple[int, ...]]],
     deadline: float,
+    *,
+    introduced: set[int],
+    dropped: set[int],
 ) -> bool:
     """Three- and four-piece patterns once two-piece pricing has stalled."""
 
     added = False
-    alphabet = _alphabet(menus)
     stocks = _avail(group)
     kerf = group.blade_margin
+    max_stock = max(stocks) if stocks else 0
     for pipe_index, pipe in enumerate(group.pipes):
         _ensure_time(deadline)
         if pipe.max_joints < 2 or len(menus[pipe_index]) >= _MAX_PATTERNS:
             continue
         existing = set(menus[pipe_index])
-        for pieces in (3, 4):
-            if pieces - 1 > pipe.max_joints:
+        piece_counts = [3, 4]
+        if max_stock and pipe.length > 2 * max_stock:
+            need = (pipe.length + max_stock - 1) // max_stock
+            piece_counts = list(range(need, min(pipe.max_joints + 1, need + 2, 5) + 1))
+        for pieces in piece_counts:
+            if pieces < 2 or pieces - 1 > pipe.max_joints:
                 continue
             uniform = _uniform_parts(pipe, group, pieces)
-            if uniform is not None and uniform not in existing and _fits_alphabet(uniform, alphabet):
-                menus[pipe_index].append(uniform)
-                existing.add(uniform)
-                alphabet.update(uniform)
-                added = True
-                if len(menus[pipe_index]) >= _MAX_PATTERNS:
-                    break
+            if uniform is not None and uniform not in existing:
+                if _admit(menus, pipe_index, uniform, introduced, dropped):
+                    existing.add(uniform)
+                    added = True
+            if pieces >= 3:
+                for stock in _anchor_stocks(stocks, pipe.length):
+                    peeled = _stock_peel(pipe, group, stock, pieces)
+                    if peeled is None or peeled in existing:
+                        continue
+                    if _admit(menus, pipe_index, peeled, introduced, dropped):
+                        existing.add(peeled)
+                        added = True
+        alphabet = _alphabet(menus)
         bases = [parts for parts in menus[pipe_index] if len(parts) == 2][:4]
         for base in bases:
             if len(menus[pipe_index]) >= _MAX_PATTERNS:
@@ -424,20 +653,10 @@ def _add_longer_patterns(
                 rebuilt = _split_piece(pipe, group, base, longer, target)
                 if rebuilt is None or rebuilt in existing:
                     continue
-                if not _fits_alphabet(rebuilt, alphabet):
-                    continue
-                menus[pipe_index].append(rebuilt)
-                existing.add(rebuilt)
-                alphabet.update(rebuilt)
-                added = True
-                if len(menus[pipe_index]) >= _MAX_PATTERNS:
-                    break
+                if _admit(menus, pipe_index, rebuilt, introduced, dropped):
+                    existing.add(rebuilt)
+                    added = True
     return added
-
-
-def _fits_alphabet(parts: tuple[int, ...], alphabet: set[int]) -> bool:
-    extra = {part for part in parts if part not in alphabet}
-    return len(alphabet) + len(extra) <= _MAX_ALPHABET
 
 
 def _shrink_menus(menus: list[list[tuple[int, ...]]]) -> list[list[tuple[int, ...]]]:

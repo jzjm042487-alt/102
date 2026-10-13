@@ -635,3 +635,17 @@ def test_ondemand_budget_is_shared_by_every_group_in_one_case(monkeypatch) -> No
     assert cell["remaining"] < 0.6
     assert first["failure_class"] == "UNPROVED_NO_SOLUTION"
     assert second["failure_class"] == "UNPROVED_NO_SOLUTION"
+
+
+def test_full_alphabet_replaces_a_rare_length() -> None:
+    from app.engine_stable_ondemand import _MAX_ALPHABET, _admit, _alphabet
+
+    menus = [[(1,), (2,), (3,)]]
+    for length in range(4, _MAX_ALPHABET + 1):
+        menus.append([(length,)])
+    assert len(_alphabet(menus)) == _MAX_ALPHABET
+    introduced: set[int] = set()
+    dropped: set[int] = set()
+    assert _admit(menus, 0, (100,), introduced, dropped) is True
+    assert 100 in _alphabet(menus)
+    assert len(_alphabet(menus)) <= _MAX_ALPHABET
