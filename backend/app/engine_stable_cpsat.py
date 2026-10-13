@@ -41,6 +41,7 @@ _EXTRA_LONG = 24
 # order-specific lengths.
 _MAX_PIECES = 6
 _MAX_FLOW_ARCS = 80000
+_MAX_COLUMNS = 90000
 
 
 def cpsat_note() -> str:
@@ -397,6 +398,113 @@ def _trim_menus(menus, stocks: list[int], kerf: int, mode: str):
     return [[parts for parts in menu if set(parts) <= allowed] for menu in menus]
 
 
+def _cut_patterns(lengths: list[int], stocks: list[int], kerf: int, mode: str):
+    """Explicit bars: identical pieces, pairs, and one piece plus repeats.
+
+    This list is a restriction. Callers that would exceed ``_MAX_COLUMNS``
+    use the arc-flow model instead of treating the overflow as infeasible.
+    """
+
+    patterns: list[tuple[int, Counter[int]]] = []
+    seen: set[tuple[int, tuple[int, ...]]] = set()
+
+    def add(stock: int, parts: tuple[int, ...]) -> None:
+        if any(part <= 0 for part in parts):
+            return
+        key = (stock, tuple(sorted(parts)))
+        if key in seen:
+            return
+        if _CutCandidate(stock, key[1], kerf, mode).remainder < 0:
+            return
+        seen.add(key)
+        patterns.append((stock, Counter(key[1])))
+        if len(patterns) > _MAX_COLUMNS:
+            raise _ColumnOverflow
+
+    try:
+        for index, left in enumerate(lengths):
+            for copies in range(1, 7):
+                placed = False
+                blob = (left,) * copies
+                for stock in stocks:
+                    before = len(patterns)
+                    add(stock, blob)
+                    placed = placed or len(patterns) > before
+                if not placed:
+                    break
+            for right in lengths[index + 1 :]:
+                for stock in stocks:
+                    add(stock, (left, right))
+                for copies in range(2, 5):
+                    placed = False
+                    for stock in stocks:
+                        before = len(patterns)
+                        add(stock, (left,) + (right,) * copies)
+                        add(stock, (right,) + (left,) * copies)
+                        placed = placed or len(patterns) > before
+                    if not placed:
+                        break
+        if len(lengths) <= 18 and len(patterns) < 70000:
+            for i, first in enumerate(lengths):
+                for j in range(i + 1, len(lengths)):
+                    second = lengths[j]
+                    for k in range(j + 1, len(lengths)):
+                        third = lengths[k]
+                        for stock in stocks:
+                            add(stock, (first, second, third))
+    except _ColumnOverflow:
+        return None
+    return patterns
+
+
+class _ColumnOverflow(Exception):
+    """The explicit cut list passed the fixed column budget."""
+
+
+def _try_column_model(group, catalogues, cp_model, avail, stocks, kerf, mode):
+    lengths = sorted({part for menu in catalogues for parts in menu for part in parts})
+    patterns = _cut_patterns(lengths, stocks, kerf, mode)
+    if not patterns:
+        return None
+    model = cp_model.CpModel()
+    choice: list[list] = []
+    for pipe_index, pipe in enumerate(group.pipes):
+        row = []
+        for pattern_index, _parts in enumerate(catalogues[pipe_index]):
+            row.append(model.NewIntVar(0, pipe.demand, f"x{pipe_index}_{pattern_index}"))
+        model.Add(sum(row) == pipe.demand)
+        choice.append(row)
+    demand_terms: dict[int, list] = {length: [] for length in lengths}
+    for pipe_index, menu in enumerate(catalogues):
+        for pattern_index, parts in enumerate(menu):
+            for length, copies in Counter(parts).items():
+                var = choice[pipe_index][pattern_index]
+                demand_terms[length].append(var if copies == 1 else copies * var)
+    usage = [
+        model.NewIntVar(0, avail[stock], f"y{index}")
+        for index, (stock, _recipe) in enumerate(patterns)
+    ]
+    for length in lengths:
+        produced = []
+        for var, (_stock, recipe) in zip(usage, patterns):
+            copies = recipe.get(length, 0)
+            if copies == 1:
+                produced.append(var)
+            elif copies > 1:
+                produced.append(copies * var)
+        if not produced:
+            if demand_terms[length]:
+                model.Add(sum(demand_terms[length]) == 0)
+            continue
+        model.Add(sum(demand_terms[length]) == sum(produced))
+    by_stock: dict[int, list] = defaultdict(list)
+    for var, (stock, _recipe) in zip(usage, patterns):
+        by_stock[stock].append(var)
+    for stock, terms in by_stock.items():
+        model.Add(sum(terms) <= avail[stock])
+    return model, ("columns", catalogues, patterns, usage, choice, kerf, mode)
+
+
 def _build_model(group: MaterialGroup, catalogues, cp_model):
     kerf = group.blade_margin
     mode = group.kerf_mode
@@ -404,6 +512,9 @@ def _build_model(group: MaterialGroup, catalogues, cp_model):
     for stock in group.stocks:
         avail[stock.length] += stock.quantity
     stocks = [length for length, qty in sorted(avail.items()) if qty > 0]
+    columns = _try_column_model(group, catalogues, cp_model, avail, stocks, kerf, mode)
+    if columns is not None:
+        return columns
     trimmed = _trim_menus(catalogues, stocks, kerf, mode)
     if not trimmed or any(not menu for menu in trimmed):
         return None
@@ -457,9 +568,11 @@ def _build_model(group: MaterialGroup, catalogues, cp_model):
                 model.Add(sum(incoming) == 0)
         started = outflow.get((0, 0), [])
         if not started:
-            return None
+            continue
         model.Add(sum(started) <= avail[stock])
         graphs.append((stock, use, use_vars, end_vars))
+    if not graphs:
+        return None
     for length, terms in demand_terms.items():
         made = produced[length]
         if not made:
@@ -467,7 +580,7 @@ def _build_model(group: MaterialGroup, catalogues, cp_model):
                 model.Add(sum(terms) == 0)
             continue
         model.Add(sum(terms) == sum(made))
-    return model, (trimmed, graphs, choice, kerf, mode)
+    return model, ("arc", trimmed, graphs, choice, kerf, mode)
 
 
 def _decompose(use, use_vars, end_vars, solver) -> list[tuple[tuple[int, ...], int]] | None:
@@ -513,7 +626,26 @@ def _decompose(use, use_vars, end_vars, solver) -> list[tuple[tuple[int, ...], i
 
 
 def _read_solution(group, pack, solver, started: float):
-    trimmed, graphs, choice, kerf, mode = pack
+    if pack[0] == "columns":
+        _kind, catalogues, patterns, usage, choice, kerf, mode = pack
+        weld: Counter[tuple[int, tuple[int, ...]]] = Counter()
+        for pipe_index, menu in enumerate(catalogues):
+            for pattern_index, parts in enumerate(menu):
+                qty = solver.Value(choice[pipe_index][pattern_index])
+                if qty > 0:
+                    weld[(pipe_index, parts)] += qty
+        merged: Counter[tuple[int, tuple[int, ...]]] = Counter()
+        for var, (stock, recipe) in zip(usage, patterns):
+            qty = solver.Value(var)
+            if qty > 0:
+                merged[(stock, tuple(sorted(recipe.elements())))] += qty
+        cuts = [
+            (_CutCandidate(stock, parts, kerf, mode), qty)
+            for (stock, parts), qty in merged.items()
+            if qty > 0
+        ]
+        return _emit(group, weld, cuts, started)
+    _kind, trimmed, graphs, choice, kerf, mode = pack
     weld: Counter[tuple[int, tuple[int, ...]]] = Counter()
     for pipe_index, menu in enumerate(trimmed):
         for pattern_index, parts in enumerate(menu):
