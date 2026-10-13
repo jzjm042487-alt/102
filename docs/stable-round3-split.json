@@ -1,0 +1,1827 @@
+{
+  "seed": 20261013,
+  "sampler": "random.Random(seed).sample(unseen_record_indexes, k)",
+  "k_rule": "round(0.30 * unsolved_count)",
+  "universe_file": "docs/stable-feasibility-results.csv",
+  "universe_rule": "rows whose 是否可行 is not 是; 154 UNPROVED_NO_SOLUTION + 8 TIMEOUT_NO_SOLUTION",
+  "unsolved_count": 162,
+  "inspected_count": 64,
+  "unseen_count": 98,
+  "blind_count": 49,
+  "dev_count": 113,
+  "blind_fraction_of_unsolved": 0.3025,
+  "holdout_rule": "Blind cases are drawn only from unsolved records that were not named in the round-2 reports and were not in the every-5th preview sample already executed this session. Previously solved records are a separate regression set and are not part of this split.",
+  "dev_record_indexes": [
+    250,
+    455,
+    588,
+    653,
+    774,
+    776,
+    852,
+    941,
+    1083,
+    1139,
+    1438,
+    1518,
+    1601,
+    1602,
+    1604,
+    1603,
+    1640,
+    1642,
+    1728,
+    1756,
+    1791,
+    1863,
+    1864,
+    1909,
+    1969,
+    1984,
+    2019,
+    2033,
+    2063,
+    2065,
+    2094,
+    2105,
+    2110,
+    2165,
+    2213,
+    2275,
+    2276,
+    2290,
+    2297,
+    2309,
+    2299,
+    2349,
+    2355,
+    2356,
+    2364,
+    2362,
+    2393,
+    2388,
+    2405,
+    2440,
+    2481,
+    2488,
+    2496,
+    2492,
+    2502,
+    2522,
+    2527,
+    2575,
+    2576,
+    2583,
+    2601,
+    2630,
+    2647,
+    2649,
+    2691,
+    2698,
+    2701,
+    2715,
+    2714,
+    2739,
+    2725,
+    2727,
+    2746,
+    2749,
+    2781,
+    2780,
+    2772,
+    2796,
+    2803,
+    2811,
+    2827,
+    2821,
+    2830,
+    2852,
+    2849,
+    2851,
+    2914,
+    2916,
+    2945,
+    2946,
+    2954,
+    2979,
+    2980,
+    2981,
+    2972,
+    2975,
+    3002,
+    3034,
+    3024,
+    3015,
+    3039,
+    3049,
+    3043,
+    3084,
+    3078,
+    3123,
+    3072,
+    3145,
+    3146,
+    3114,
+    3147,
+    3169,
+    3165
+  ],
+  "blind_record_indexes": [
+    794,
+    1238,
+    1398,
+    1706,
+    1789,
+    1835,
+    1870,
+    1947,
+    1961,
+    2009,
+    2081,
+    2082,
+    2096,
+    2104,
+    2129,
+    2139,
+    2148,
+    2166,
+    2298,
+    2350,
+    2367,
+    2406,
+    2453,
+    2461,
+    2540,
+    2547,
+    2570,
+    2605,
+    2607,
+    2646,
+    2660,
+    2699,
+    2805,
+    2807,
+    2809,
+    2829,
+    2859,
+    2903,
+    2921,
+    2923,
+    2933,
+    2957,
+    3038,
+    3050,
+    3060,
+    3064,
+    3067,
+    3137,
+    3168
+  ],
+  "cases": [
+    {
+      "record_index": 250,
+      "case_id": "17e6b0d4-c343-4c70-aef3-7bb2bf23cd77",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 455,
+      "case_id": "08dd8732-04ae-45bb-9cf2-cdd17d2214ac",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 588,
+      "case_id": "56971121-11b1-4cb5-ace9-f5132f1ef221",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 653,
+      "case_id": "2247d310-de4c-4215-b2c7-d8da1a81e3e9",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 774,
+      "case_id": "78f407a0-04d2-4626-93a5-82baf94b2b55",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 776,
+      "case_id": "e4103719-df04-4f15-b86b-f1920e2b32d4",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 794,
+      "case_id": "880302f0-e830-47e2-b916-f7ac2825cdee",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 852,
+      "case_id": "f730b0fe-ec65-4558-8dfa-1f4a44fa9fe8",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 941,
+      "case_id": "e86661a8-cc1e-413c-b1ee-fb81f322e2d7",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1083,
+      "case_id": "1c9092c0-7924-45f3-a3a7-375924cfd812",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1139,
+      "case_id": "e12efc0a-3539-44d3-b61a-5b8578d8d03f",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1238,
+      "case_id": "7800a506-11ca-4eb8-a7ae-58594f03e065",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1398,
+      "case_id": "038cf4d0-c889-41d0-8af4-5c0a7f7b4f17",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1438,
+      "case_id": "8de872ff-d232-4e4a-9f50-1fcb41a6680f",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1518,
+      "case_id": "7f9bcfdb-27c8-4fd2-be0d-34b4cd7811c2",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1601,
+      "case_id": "e2c42a33-c71a-4a9e-afd7-1593169ad5d2",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1602,
+      "case_id": "82cfc78e-97c8-4eba-b16d-2fc2d7d9218c",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1604,
+      "case_id": "42eea3ac-2207-4436-93b3-9f2b25660f34",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1603,
+      "case_id": "6d12a26e-3d7d-4add-99c0-5492ec421ea4",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1640,
+      "case_id": "e3320b6b-3f99-4378-ba47-93fa6f8ca57f",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1642,
+      "case_id": "1e3c29d6-bec0-4a28-bde3-64e62fb40076",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1706,
+      "case_id": "1815ae43-3ba9-4081-a07d-efe61ee96943",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1728,
+      "case_id": "90768b1c-c142-4d99-9944-437349123119",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1756,
+      "case_id": "76c9641e-d5ef-4c9c-bf36-cf4670d5a176",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1789,
+      "case_id": "37c25912-c29a-4c90-89a1-4878806a7314",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1791,
+      "case_id": "a1cbf306-6edc-4ddf-ae07-43ccdfac1f5b",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1835,
+      "case_id": "f0212985-1d32-4b63-b1c7-0e4d64c65517",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1863,
+      "case_id": "21d181ee-a133-400a-8750-d9db4841398f",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1864,
+      "case_id": "02952e87-9bfb-4548-b5df-c7ed58f2516a",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1870,
+      "case_id": "a4e36158-b3b9-489b-a913-380193b75d15",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1909,
+      "case_id": "1cdc97f1-1445-46d9-b44a-b6f97f0bfe35",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1947,
+      "case_id": "98a4a5e6-50e3-499e-865a-8ebdefe965b2",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1961,
+      "case_id": "30ec34c6-c182-454b-80c4-34e8b260d28a",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1969,
+      "case_id": "14a6d20d-f782-47c7-9a56-e7a4eadc491d",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 1984,
+      "case_id": "0dd319e0-945c-41fb-84b0-8bdc26b2d65b",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2019,
+      "case_id": "0958615c-3a50-4cb2-b634-ace553cc25e2",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2009,
+      "case_id": "40c71384-41ec-4ba7-9c00-769c3eeed9d2",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2033,
+      "case_id": "fe11f5bd-d140-4b15-a881-232a12912cc2",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2063,
+      "case_id": "cb43c51e-7dfb-4c42-875f-2e178c5b1ea6",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2065,
+      "case_id": "90b4b6f7-48bd-49c1-87d1-b64277451893",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2094,
+      "case_id": "f3182627-3c08-45ce-b766-0170821340d4",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2081,
+      "case_id": "ebff0015-edcc-4ccd-878a-6f923f20fa8d",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2082,
+      "case_id": "4b745243-189e-4e4e-a723-68b3efbf8cc6",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2096,
+      "case_id": "f52bcb05-439d-4633-b690-a643b845be33",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2105,
+      "case_id": "a4d16c46-5a52-4105-9245-ffba96801e10",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2110,
+      "case_id": "1ad945b4-980f-4817-8411-0df9bfc78c9b",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2104,
+      "case_id": "b13cf4d6-0e79-4908-8896-b36c3ea09fc1",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2129,
+      "case_id": "3eab0d18-83c1-47bb-90bd-3a60ff27696d",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2139,
+      "case_id": "409189af-3363-40d0-9ca0-d564a4a9e837",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2148,
+      "case_id": "e65d19f3-abf6-4173-ab7f-69e3141b60db",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2165,
+      "case_id": "4d04cc99-84b4-4bbd-aa0e-1cee222f6166",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2166,
+      "case_id": "51b6264a-043e-489d-bc11-665b88e4468e",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2213,
+      "case_id": "8113dc08-2a7e-44db-bca2-77d47f19832c",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2275,
+      "case_id": "1967efff-cfa2-44cd-a818-d5395b2cecb5",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2276,
+      "case_id": "11c0156a-2028-4dc7-8c6c-9bd6ce4bd504",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2290,
+      "case_id": "254f25a0-47bc-484e-85dc-11b9b1059620",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2298,
+      "case_id": "1e71bfd5-945d-4cc5-8f95-780fdf2955f6",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2297,
+      "case_id": "59454e31-1ec6-4a20-ba0c-1a48fcd60635",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2309,
+      "case_id": "1bd6f457-a1e8-4fb8-b56b-07c1ccd1e47e",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2299,
+      "case_id": "4602fbe6-c910-4e67-bbee-7d77bdf7fe2c",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2349,
+      "case_id": "5eb85931-feec-45c4-afba-2b4ed6c462f7",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2350,
+      "case_id": "61cf060e-6f90-4c0b-a45e-591541a09033",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2355,
+      "case_id": "6f578346-0c35-4b3f-a6ac-32a6f6657f89",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2356,
+      "case_id": "1e988756-419d-45ca-822e-c4aadf14a658",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2364,
+      "case_id": "78b8e524-b32a-4cf0-8dfb-c35d540cc3df",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2362,
+      "case_id": "5bba799c-8d72-4d39-a721-fba820fdc664",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2367,
+      "case_id": "ffc97e40-7a21-4364-9535-00c3487bd37a",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2393,
+      "case_id": "0b082c38-c3b6-4cdd-819a-53bda6f9667a",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2388,
+      "case_id": "b723b749-5edb-4193-ba70-29eea99f1622",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2406,
+      "case_id": "f56bcbe0-fc38-4789-8397-82c2a3498fd2",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2405,
+      "case_id": "23285848-b402-4764-860f-9bd4a0b8091f",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2440,
+      "case_id": "473fe4ec-e8d2-464d-add7-3bc640c69187",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2453,
+      "case_id": "e411233f-7959-4841-9ade-b40452ee1612",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2461,
+      "case_id": "bc7258d5-2667-4049-a992-19bdd89b846e",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2481,
+      "case_id": "e139eda3-6259-47a1-ac89-a15566633ad0",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2488,
+      "case_id": "cb45c432-8705-452d-a364-464c2651590e",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2496,
+      "case_id": "08cdd891-c876-492f-bfce-c86518b813f6",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2492,
+      "case_id": "5fd698de-591f-40d5-bb84-2523530b19de",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2502,
+      "case_id": "97517c72-a672-466e-a6f2-35bc48886a1a",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2522,
+      "case_id": "0b8fb467-718e-4d72-9967-7fab9016e688",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2527,
+      "case_id": "12ba9b01-7879-451e-95f2-4b8d2c5de7be",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2540,
+      "case_id": "13968969-e17d-4e8d-a956-f2e1c7c723c1",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2547,
+      "case_id": "4898f325-5afc-48ae-b535-5fe35fe45a6b",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2575,
+      "case_id": "833f8cb7-e9e2-4136-9d29-c53730d762a7",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2570,
+      "case_id": "31c62971-cabd-45f6-b5ee-051f947acf81",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2576,
+      "case_id": "81f2bcc6-ac70-4e2e-bb17-fae01093137f",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2583,
+      "case_id": "70c3469d-aa6e-4c6b-8534-be49604ff8b5",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2601,
+      "case_id": "333b1cdf-5570-43fa-a288-9165cbc88e66",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2605,
+      "case_id": "f19aa2fa-2664-4886-b58f-2773b476e603",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2607,
+      "case_id": "4218e5b7-3545-466c-afba-6cc925066b4c",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2630,
+      "case_id": "63cffa29-02e4-494a-b8f7-949e5ebc9934",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2646,
+      "case_id": "403ee246-04d0-49dd-9345-5eaf1c3a722b",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2647,
+      "case_id": "38e67625-78c0-4dc5-957e-ec27ea627cfc",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2649,
+      "case_id": "6c77c1e6-391b-4638-b2d8-476a9d1229af",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2660,
+      "case_id": "da0f570e-cbf9-4568-8797-73307d239e3e",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2691,
+      "case_id": "e98bf74d-e3ed-4ad3-805c-8de70caad58f",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2698,
+      "case_id": "3b9f938c-8dd5-43a6-86b4-63e71125058e",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2699,
+      "case_id": "1d55f3f7-caa3-44a9-8bd2-234bf756378f",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2701,
+      "case_id": "bcfb22e9-1c61-42ac-be5e-755da675d4dd",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2715,
+      "case_id": "1879144f-5613-4959-96f2-a43233dbf34e",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2714,
+      "case_id": "4653462a-d33c-4e7d-9df5-58387c461873",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2739,
+      "case_id": "2a1af8ca-1ebb-48ad-a107-a239b1fc2253",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2725,
+      "case_id": "1c61c67e-60d5-430e-b772-b3e5b3373bdf",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2727,
+      "case_id": "6003806e-ea84-45eb-8969-fa5b6d78b405",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2746,
+      "case_id": "7294d020-01e9-434c-87cd-cf6dd80fff1c",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2749,
+      "case_id": "500b3367-25ac-4d91-ba26-afde098a7449",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2781,
+      "case_id": "c3f604f5-dbe7-4033-8b34-eee35aa6d040",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2780,
+      "case_id": "0afceae3-73a0-483c-be00-a35c007d99d6",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2772,
+      "case_id": "38f86cc8-968a-4e79-bed0-773b43e5b909",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "TIMEOUT",
+      "round2_failure_class": "TIMEOUT_NO_SOLUTION"
+    },
+    {
+      "record_index": 2796,
+      "case_id": "e9fe9d41-9bff-4529-b28c-8e767632f6d0",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2803,
+      "case_id": "2bf814e8-3169-4a20-a694-f7b8a57e4b83",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2805,
+      "case_id": "b28b15df-60e0-4d1c-94e5-189bdb37489e",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2807,
+      "case_id": "4478a422-1bcf-4fe8-b225-d1372deeb99f",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2809,
+      "case_id": "cffd19b8-0df4-420f-876f-cc662312b3a1",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2811,
+      "case_id": "cbd850ab-028a-47ca-a4b9-fb6af7546699",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2827,
+      "case_id": "f8e465c6-373e-43fd-8bc1-3f5bf963637f",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2829,
+      "case_id": "2d2b308d-8dbe-412b-9fdd-4d95958e6ea9",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2821,
+      "case_id": "900f3f5d-e6f8-4dd8-9b3f-7874d8ed4ebe",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2830,
+      "case_id": "eb562f68-8403-4819-87f7-5a4f98ad7611",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2852,
+      "case_id": "6b5b278b-934a-43c6-957a-fc5a2a587f6e",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2849,
+      "case_id": "61c9c0fe-7727-4ab1-a40f-9ae31382bb09",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2851,
+      "case_id": "ae640dc4-3149-4dbc-be04-b87290c398e0",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2859,
+      "case_id": "33ece0ca-68e5-4f07-80b9-5e95822ebebb",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2903,
+      "case_id": "50b6fa85-e816-4d0a-bc6b-2d7045b7b00d",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2914,
+      "case_id": "48a5adb2-5e83-4428-be79-675afec1c380",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2916,
+      "case_id": "cfd17230-5b4e-4f2d-b788-1fb9f13df783",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2921,
+      "case_id": "c4b5ae75-0d2b-4e10-ac26-23164064aec1",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2923,
+      "case_id": "1960d876-2b5f-40f2-a391-bd915c9b0b5f",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2933,
+      "case_id": "f20d4170-0a80-4ea9-9b04-e58e323cdf6f",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2945,
+      "case_id": "983061a1-bbf6-44e0-9072-0ae018ae7e1a",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2946,
+      "case_id": "5db62ef0-1bbf-41ca-bdaa-db882f809a68",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2954,
+      "case_id": "5af97795-fcc4-47ae-b560-7918737d10c9",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2979,
+      "case_id": "b963cad0-0a29-4b4e-9a4b-adc3501f5d17",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2957,
+      "case_id": "5e8c609e-d7ba-46b7-ba8c-85a704a0c08b",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2980,
+      "case_id": "f7c18ba2-348a-4d0b-aeb4-a140b55c65a0",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2981,
+      "case_id": "1b3c2636-dade-4457-8d92-315de9fcf400",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 2972,
+      "case_id": "dd83bc1b-8257-4b0e-b452-1ab8ab2c6699",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "TIMEOUT",
+      "round2_failure_class": "TIMEOUT_NO_SOLUTION"
+    },
+    {
+      "record_index": 2975,
+      "case_id": "0b768805-2b75-49f5-8b0d-429d9f04d3ab",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "TIMEOUT",
+      "round2_failure_class": "TIMEOUT_NO_SOLUTION"
+    },
+    {
+      "record_index": 3002,
+      "case_id": "026a45ec-cb4f-414d-a6e4-79d558465394",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3034,
+      "case_id": "2219773c-eac9-431f-9e19-9371bb1c6d1d",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3024,
+      "case_id": "7f10569a-989d-4dd3-acf9-be10f2df81fe",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3015,
+      "case_id": "f5f9cb92-9c54-4919-b5c4-f5b700d6a390",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "TIMEOUT",
+      "round2_failure_class": "TIMEOUT_NO_SOLUTION"
+    },
+    {
+      "record_index": 3039,
+      "case_id": "6b51755b-73bf-4104-a914-4b4610d4b4aa",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3038,
+      "case_id": "dee309e1-d1f5-4faa-bd71-ba9136dec3d6",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3060,
+      "case_id": "e71711e6-39ba-4941-aeb7-d347149924d7",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3049,
+      "case_id": "1241da2a-ec2f-4bbe-8cdd-4e0c477251e7",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3050,
+      "case_id": "8943f196-9c87-4315-b723-be9d3a9b6aa9",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3064,
+      "case_id": "53cc19ee-891b-4ea5-84bb-c329b4cd60c3",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3067,
+      "case_id": "71254678-c541-4551-b011-9e456715a1f1",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3043,
+      "case_id": "b675be9e-58a5-4155-899a-baa6ba9d38e3",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "TIMEOUT",
+      "round2_failure_class": "TIMEOUT_NO_SOLUTION"
+    },
+    {
+      "record_index": 3084,
+      "case_id": "c0a5c244-1d3b-4ab4-a25d-68af1bcab910",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round3-session",
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3078,
+      "case_id": "a564944f-f2cd-44e9-bdd3-46ff4732ef87",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "TIMEOUT",
+      "round2_failure_class": "TIMEOUT_NO_SOLUTION"
+    },
+    {
+      "record_index": 3123,
+      "case_id": "b90c6a57-58e8-45a0-932b-dffec7f772bf",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3137,
+      "case_id": "d4ac84ca-d25c-4278-97c7-4c76913470ff",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3072,
+      "case_id": "07039e33-15d3-4476-af58-c4bb9d16ecec",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "TIMEOUT",
+      "round2_failure_class": "TIMEOUT_NO_SOLUTION"
+    },
+    {
+      "record_index": 3145,
+      "case_id": "958743b9-0374-438c-ac86-ac67934fbff9",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3146,
+      "case_id": "72f8eff4-7e31-4d36-8cc0-40e4f29a953a",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3114,
+      "case_id": "d5271777-5c00-4e60-ba2f-c65f2149e408",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "named-in-round2-docs",
+        "named-in-round3-session"
+      ],
+      "round2_status": "TIMEOUT",
+      "round2_failure_class": "TIMEOUT_NO_SOLUTION"
+    },
+    {
+      "record_index": 3147,
+      "case_id": "818e7535-941a-48c3-ab60-a1d0bf64906c",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3169,
+      "case_id": "ca78cff7-caab-4c0b-a085-c7c1e9f737be",
+      "split": "dev",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3165,
+      "case_id": "30b6f28e-be2e-4d25-9b0f-8066130aacf3",
+      "split": "dev",
+      "inspected_before_split": true,
+      "inspected_reasons": [
+        "every-5th-preview-sample"
+      ],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    },
+    {
+      "record_index": 3168,
+      "case_id": "30dfc0c4-f00c-49cf-9cd3-8ca6d9eb5681",
+      "split": "blind",
+      "inspected_before_split": false,
+      "inspected_reasons": [],
+      "round2_status": "UNSOLVED",
+      "round2_failure_class": "UNPROVED_NO_SOLUTION"
+    }
+  ]
+}
