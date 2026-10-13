@@ -19,14 +19,59 @@ METRIC_LENGTH_TOLERANCE = Decimal("0.05")
 RATE_TOLERANCE = Decimal("0.000001")
 
 
-def verify_solution(original_payload: dict, solution: dict) -> dict:
+def must_use_enforced(payload: Any, override: bool | None = None) -> bool:
+    """Whether the group-level must-use priority is in force.
+
+    An explicit ``override`` wins. Otherwise the flag is read from
+    ``NestParam.EnforceMustUse`` (or ``enforce_must_use``) on the payload, its
+    ``input`` / ``OriginalProblem`` node, or the root object. Absent means off:
+    legacy plans do not obey the priority, so the check is opt-in.
+    """
+
+    if override is not None:
+        return bool(override)
+    if not isinstance(payload, Mapping):
+        return False
+    found = _find_enforce_must_use(payload)
+    if found is None and isinstance(payload.get("input"), Mapping):
+        found = _find_enforce_must_use(payload["input"])
+    if found is None and isinstance(payload.get("OriginalProblem"), Mapping):
+        found = _find_enforce_must_use(payload["OriginalProblem"])
+    if found is None:
+        return False
+    return _as_bool(found)
+
+
+def _find_enforce_must_use(node: Mapping[str, Any]) -> Any:
+    for outer in ("NestParam", "nest_param"):
+        nested = node.get(outer)
+        if isinstance(nested, Mapping):
+            for key in ("EnforceMustUse", "enforce_must_use"):
+                if key in nested:
+                    return nested[key]
+    for key in ("EnforceMustUse", "enforce_must_use"):
+        if key in node:
+            return node[key]
+    return None
+
+
+def verify_solution(
+    original_payload: dict,
+    solution: dict,
+    *,
+    enforce_must_use: bool | None = None,
+) -> dict:
     """Verify a nesting solution and return a JSON-serialisable report.
 
     Returned issues have stable ``code``, ``message``, ``path`` and ``severity``
     keys.  ``passed`` is false when at least one error exists; warnings (currently
     reserved for forward-compatible extensions) do not make a solution fail.
+
+    ``enforce_must_use`` overrides ``NestParam.EnforceMustUse``. When both are
+    absent the must-use priority is not checked.
     """
 
+    enforce_flag = must_use_enforced(original_payload, enforce_must_use)
     issues: list[dict[str, str]] = []
     try:
         problem_contexts = _extract_problem_contexts(original_payload, issues)
@@ -36,7 +81,13 @@ def verify_solution(original_payload: dict, solution: dict) -> dict:
         group_metrics: list[dict[str, Any]] = []
         for problem_ctx, solution_group, group_path in pairings:
             group_metrics.append(
-                _verify_group(problem_ctx, solution_group, group_path, issues)
+                _verify_group(
+                    problem_ctx,
+                    solution_group,
+                    group_path,
+                    issues,
+                    enforce_must_use=enforce_flag,
+                )
             )
 
         totals = _aggregate_metrics(group_metrics)
@@ -357,7 +408,12 @@ def _unsolved_group_metrics(
 
 
 def _verify_group(
-    context: dict, result_group: Mapping[str, Any], path: str, issues: list[dict]
+    context: dict,
+    result_group: Mapping[str, Any],
+    path: str,
+    issues: list[dict],
+    *,
+    enforce_must_use: bool = False,
 ) -> dict[str, Any]:
     problem = context["group"]
     group_key = _group_key(problem)
@@ -856,7 +912,7 @@ def _verify_group(
         max(0, used_stock[length] - must_use_quantity.get(length, 0))
         for length in used_stock
     )
-    if used_available > 0 and used_must < must_use_total:
+    if enforce_must_use and used_available > 0 and used_must < must_use_total:
         _issue(
             issues,
             "MUST_USE_STOCK_NOT_USED",
@@ -1926,4 +1982,4 @@ def _issue(
     )
 
 
-__all__ = ["verify_solution"]
+__all__ = ["must_use_enforced", "verify_solution"]

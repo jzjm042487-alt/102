@@ -1230,6 +1230,8 @@ def _solve_group_fallback_attempt(
     restrictive_first: bool,
     longest_first: bool,
     strategy_name: str,
+    abort_on_time: bool = False,
+    enforce_must_use: bool = True,
 ) -> dict[str, Any]:
     started = time.monotonic()
     remaining_stock = {stock.length: stock.quantity for stock in group.stocks}
@@ -1311,6 +1313,10 @@ def _solve_group_fallback_attempt(
         allocations[(pipe_index, parts)] += 1
         known_patterns.add(parts)
         if time.monotonic() - started > max(time_limit, 0.001):
+            if abort_on_time:
+                # Stable feasibility must obey the caller's wall clock. The
+                # default engine still finishes a feasible allocation.
+                raise TimeoutError("deterministic fallback exceeded the time limit")
             # A feasible result is more valuable than aborting midway.  The
             # deterministic allocator completes the current material pool;
             # this warning is added after assembly.
@@ -1335,7 +1341,11 @@ def _solve_group_fallback_attempt(
     # Group-level priority: an available bar may be used only after every
     # must-use bar is consumed.  Small demand served entirely from must-use stock
     # (used_available == 0) is fine even if must-use is not fully exhausted.
-    if used_available > 0 and sum(used_mandatory.values()) < must_use_total:
+    if (
+        enforce_must_use
+        and used_available > 0
+        and sum(used_mandatory.values()) < must_use_total
+    ):
         raise ValueError("must_use inventory not exhausted before using available stock")
     bars = kept_bars
     cut_counter: Counter[tuple[int, tuple[int, ...]]] = Counter()
@@ -1364,7 +1374,13 @@ def _solve_group_fallback_attempt(
     return result
 
 
-def _solve_group_fallback(group: MaterialGroup, time_limit: float) -> dict[str, Any]:
+def _solve_group_fallback(
+    group: MaterialGroup,
+    time_limit: float,
+    *,
+    abort_on_time: bool = False,
+    enforce_must_use: bool = True,
+) -> dict[str, Any]:
     """Run complementary deterministic policies and choose lexicographically."""
 
     started = time.monotonic()
@@ -1384,8 +1400,13 @@ def _solve_group_fallback(group: MaterialGroup, time_limit: float) -> dict[str, 
         )
     feasible: list[dict[str, Any]] = []
     failures: list[str] = []
+    timed_out = False
     for use_quota, round_robin, restrictive_first, longest_first, name in strategies:
         remaining = time_limit - (time.monotonic() - started)
+        if abort_on_time and remaining <= 0:
+            failures.append(f"{name}: time limit")
+            timed_out = True
+            break
         try:
             feasible.append(
                 _solve_group_fallback_attempt(
@@ -1396,11 +1417,19 @@ def _solve_group_fallback(group: MaterialGroup, time_limit: float) -> dict[str, 
                     restrictive_first=restrictive_first,
                     longest_first=longest_first,
                     strategy_name=name,
+                    abort_on_time=abort_on_time,
+                    enforce_must_use=enforce_must_use,
                 )
             )
+        except TimeoutError as exc:
+            failures.append(f"{name}: {exc}")
+            timed_out = True
+            break
         except ValueError as exc:
             failures.append(f"{name}: {exc}")
     if not feasible:
+        if timed_out:
+            raise TimeoutError("; ".join(failures) or "deterministic fallback exceeded the time limit")
         raise ValueError("; ".join(failures) or "deterministic fallback found no solution")
 
     def rank(result: dict[str, Any]) -> tuple[Any, ...]:
@@ -1462,7 +1491,12 @@ def _tier_meets_target(result: dict[str, Any], group: MaterialGroup) -> bool:
     return achieved * 100.0 >= group.target_rate - 1e-9
 
 
-def _solve_group_scip(group: MaterialGroup, time_limit: float) -> dict[str, Any]:
+def _solve_group_scip(
+    group: MaterialGroup,
+    time_limit: float,
+    *,
+    enforce_must_use: bool = True,
+) -> dict[str, Any]:
     """Solve one material group by graded relaxation over candidate tiers.
 
     Each tier feeds a widening welding-candidate pool into the restricted MILP.
@@ -1493,6 +1527,7 @@ def _solve_group_scip(group: MaterialGroup, time_limit: float) -> dict[str, Any]
                 cut_composite_cap=TIER_CUT_COMPOSITE_CAP[tier],
                 total_cut_cap=TIER_TOTAL_CUT_CAP[tier],
                 deadline=deadline,
+                enforce_must_use=enforce_must_use,
             )
         except ValueError as exc:
             last_error = exc
@@ -1536,6 +1571,7 @@ def _solve_group_scip_with_candidates(
     cut_composite_cap: int = FULL_CUT_COMPOSITE_CAP,
     total_cut_cap: int | None = None,
     deadline: float | None = None,
+    enforce_must_use: bool = True,
 ) -> dict[str, Any]:
     from pyscipopt import Model, quicksum  # type: ignore[import-not-found]
 
@@ -1616,7 +1652,7 @@ def _solve_group_scip_with_candidates(
         expression = quicksum(x[index] for index in cuts_by_stock[stock.length])
         model.addCons(expression <= stock.quantity)
         usage_by_length[stock.length] = expression
-    if must_use_total > 0:
+    if enforce_must_use and must_use_total > 0:
         z_free = model.addVar(vtype="BINARY", name="use_available_stock")
         used_must_terms = []
         for stock in group.stocks:
@@ -2012,8 +2048,9 @@ def _solve_problem(
 
 
 def solve_payload(
-    payload: dict[str, Any], *, time_limit_seconds: float = 30.0,
+    payload: dict[str, Any], *, time_limit_seconds: float | None = None,
     engine: str = "baseline",
+    checkpoint_path: str | None = None,
 ) -> dict[str, Any]:
     """Solve all material/specification pools in a MOM payload.
 
@@ -2023,16 +2060,33 @@ def solve_payload(
     ``engine`` selects the primary solver: ``baseline`` (graded-relaxation MILP,
     the default), ``route3`` (legacy set-covering ILP), ``v4`` (arc-flow +
     classifier routing), ``global`` (phased joint cut+weld ILP with util
-    floor), or ``rcg`` (two-stage row-and-column generation).
-    ``rcg``/``route3``/``v4``/``global`` fall back to baseline per group when
-    they find no solution within ``time_limit_seconds``.
+    floor), ``rcg`` (two-stage row-and-column generation), or ``stable``
+    (feasibility-first multi-strategy search).  ``stable`` does not replace
+    the default.  Its own default time limit is 3600s when the caller omits
+    one.  ``rcg``/``route3``/``v4``/``global`` fall back to baseline per group
+    when they find no solution within ``time_limit_seconds``.
     """
 
+    if time_limit_seconds is None:
+        time_limit_seconds = 3600.0 if engine == "stable" else 30.0
     if time_limit_seconds <= 0 or not math.isfinite(time_limit_seconds):
         raise ValueError("time_limit_seconds must be a positive finite number")
     started = time.monotonic()
+    prepared_payload: dict[str, Any] | None = None
+    if engine == "stable":
+        from .engine_stable import prepare_stable_payload, solve_stable_problem
+
+        prepared_payload = prepare_stable_payload(payload)
+        payload = prepared_payload
     problem = parse_problem(payload)
-    groups = _solve_problem(problem, float(time_limit_seconds), engine=engine)
+    if engine == "stable":
+        groups = solve_stable_problem(
+            problem,
+            float(time_limit_seconds),
+            checkpoint_path=checkpoint_path,
+        )
+    else:
+        groups = _solve_problem(problem, float(time_limit_seconds), engine=engine)
     demand_units = sum(group.demand_length for group in problem.groups)
     used_units = sum(
         int(round(float(group["metrics"]["used_stock_length"]) * LENGTH_SCALE))
@@ -2081,11 +2135,15 @@ def solve_payload(
     all_lexicographic_optimal = all(
         group["metrics"].get("lexicographic_optimal", False) for group in groups
     )
-    if unsolved_group_count:
+    if engine == "stable":
+        from .engine_stable import stable_problem_status
+
+        status = stable_problem_status(groups)
+    elif unsolved_group_count:
         status = "PARTIAL" if unsolved_group_count < len(groups) else "INFEASIBLE"
     else:
         status = "TARGET_REACHED" if all_target else "FEASIBLE"
-    return {
+    result = {
         "status": status,
         "task_id": problem.task_id,
         "groups": groups,
@@ -2114,6 +2172,13 @@ def solve_payload(
         # service.solve_and_verify replaces this with the independent verifier.
         "verification": {"passed": None, "issues": [], "source": "pending"},
     }
+    if engine == "stable":
+        result["summary"]["engine"] = "stable"
+        result["summary"]["optimality_claimed"] = False
+        # Removed by solve_and_verify before the response is returned. Direct
+        # callers that verify must use this same prepared payload.
+        result["_stable_prepared_payload"] = prepared_payload
+    return result
 
 
 __all__ = ["solve_payload"]

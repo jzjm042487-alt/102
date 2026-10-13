@@ -67,10 +67,10 @@ def health() -> dict[str, Any]:
 async def solve(
     payload: Annotated[dict[str, Any], Body()],
     time_limit_seconds: Annotated[
-        float | None, Query(ge=1, le=3600)
+        float | None, Query(ge=1, le=86400)
     ] = None,
     engine: Annotated[
-        str, Query(pattern="^(baseline|route3|v4|global)$")
+        str, Query(pattern="^(baseline|route3|v4|global|stable)$")
     ] = "baseline",
 ) -> dict[str, Any]:
     started = time.monotonic()

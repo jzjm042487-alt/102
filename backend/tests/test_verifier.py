@@ -512,12 +512,15 @@ def test_is_must_chinese_yes_is_a_hard_inventory_requirement() -> None:
     stock.pop("must_use", None)
     stock["Is_Must"] = "是"
 
-    required_report = verify_solution(problem, solution)
+    required_report = verify_solution(problem, solution, enforce_must_use=True)
 
     assert "MUST_USE_STOCK_NOT_USED" in _codes(required_report)
 
+    default_report = verify_solution(problem, solution)
+    assert "MUST_USE_STOCK_NOT_USED" not in _codes(default_report)
+
     stock["Is_Must"] = "否"
-    optional_report = verify_solution(problem, solution)
+    optional_report = verify_solution(problem, solution, enforce_must_use=True)
     assert optional_report["passed"] is True
 
 
@@ -537,7 +540,7 @@ def test_must_use_is_group_priority_not_hard_quota() -> None:
         stock.pop("Is_Must", None)
         stock["must_use"] = 1
 
-    report = verify_solution(problem, solution)
+    report = verify_solution(problem, solution, enforce_must_use=True)
     assert "MUST_USE_STOCK_NOT_USED" not in _codes(report)
     assert report["passed"] is True
 
@@ -554,8 +557,11 @@ def test_must_use_violation_when_available_used_before_must_use_exhausted() -> N
         stock.pop("Is_Must", None)
         stock["must_use"] = 1 if stock["stock_length"] == 1500 else 0
 
-    report = verify_solution(problem, solution)
+    report = verify_solution(problem, solution, enforce_must_use=True)
     assert "MUST_USE_STOCK_NOT_USED" in _codes(report)
+
+    default_report = verify_solution(problem, solution)
+    assert "MUST_USE_STOCK_NOT_USED" not in _codes(default_report)
 
 
 def test_string_encoded_unweldable_area_is_parsed_and_audited() -> None:
