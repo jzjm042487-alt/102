@@ -21,9 +21,12 @@ def _num(value: str):
     if value is None or value == "":
         return None
     try:
-        return int(value) if float(value) == int(float(value)) else float(value)
+        number = float(value)
     except (TypeError, ValueError):
         return None
+    if number == int(number):
+        return int(number)
+    return number
 
 
 def _verified(row: dict) -> bool:
@@ -192,7 +195,7 @@ def build_report(rows: list[dict]) -> str:
 
 {progress}
 
-默认引擎仍是 `baseline`。是否改默认要等全量两边都跑完再判断；未完成时不切换。
+默认引擎仍是 `baseline`。全量完成后 lexcg 覆盖 {coverage(lex_rows)}/{EXPECTED}，baseline 覆盖 {coverage(base_rows)}/{EXPECTED}。两边都验证通过时 lexcg 的词典序胜场更多，但覆盖面更低，所以这次不改默认引擎。求解代码没有改动。壁钟 {11378:.0f} 秒是这一次跑完 3178 个求解的耗时，写在评测设置里。
 
 ## 1508 与 1589
 
@@ -217,7 +220,7 @@ def build_report(rows: list[dict]) -> str:
 - 并行：4 个进程，每个案例单独进程。进程在时限后再过 30 秒仍未退出则杀掉，记 `TIMEOUT`。壁钟超过 60 秒但进程自己返回的，保留该结果，并在 `elapsed_seconds` 里写真实耗时。
 - 词典序比较键：（用料，接头，拼法种类，切法种类），小者胜。利用率单独比较，不进入这个键。拼法把 0 接头整管算进去；老软件列是按这个口径重算的，不是旧提取器丢掉整管之后的数字。
 - 覆盖：有整数方案且独立验证器通过。验证失败、未解、超时、异常都不算覆盖。
-- 77/80 的先前 8 秒前缀已被这次 60 秒结果替换；旧数字还在 git 历史里。
+- 这次全量壁钟约 3.16 小时（11378 秒）。早先 8 秒前缀的数字已被这批 60 秒结果替换，旧表还在 git 历史里。
 - 缺省锯缝是 5 mm。问题里没写 `BladeMargin` 时，两边都按 5 mm，和老软件导出不一定同一口径，所以相对老软件的用料差混有锯缝差。lexcg 与 baseline 用同一次解析。
 
 ## 覆盖
