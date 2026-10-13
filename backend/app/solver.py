@@ -1231,6 +1231,7 @@ def _solve_group_fallback_attempt(
     longest_first: bool,
     strategy_name: str,
     abort_on_time: bool = False,
+    enforce_must_use: bool = True,
 ) -> dict[str, Any]:
     started = time.monotonic()
     remaining_stock = {stock.length: stock.quantity for stock in group.stocks}
@@ -1340,7 +1341,11 @@ def _solve_group_fallback_attempt(
     # Group-level priority: an available bar may be used only after every
     # must-use bar is consumed.  Small demand served entirely from must-use stock
     # (used_available == 0) is fine even if must-use is not fully exhausted.
-    if used_available > 0 and sum(used_mandatory.values()) < must_use_total:
+    if (
+        enforce_must_use
+        and used_available > 0
+        and sum(used_mandatory.values()) < must_use_total
+    ):
         raise ValueError("must_use inventory not exhausted before using available stock")
     bars = kept_bars
     cut_counter: Counter[tuple[int, tuple[int, ...]]] = Counter()
@@ -1370,7 +1375,11 @@ def _solve_group_fallback_attempt(
 
 
 def _solve_group_fallback(
-    group: MaterialGroup, time_limit: float, *, abort_on_time: bool = False
+    group: MaterialGroup,
+    time_limit: float,
+    *,
+    abort_on_time: bool = False,
+    enforce_must_use: bool = True,
 ) -> dict[str, Any]:
     """Run complementary deterministic policies and choose lexicographically."""
 
@@ -1409,6 +1418,7 @@ def _solve_group_fallback(
                     longest_first=longest_first,
                     strategy_name=name,
                     abort_on_time=abort_on_time,
+                    enforce_must_use=enforce_must_use,
                 )
             )
         except TimeoutError as exc:
@@ -1481,7 +1491,12 @@ def _tier_meets_target(result: dict[str, Any], group: MaterialGroup) -> bool:
     return achieved * 100.0 >= group.target_rate - 1e-9
 
 
-def _solve_group_scip(group: MaterialGroup, time_limit: float) -> dict[str, Any]:
+def _solve_group_scip(
+    group: MaterialGroup,
+    time_limit: float,
+    *,
+    enforce_must_use: bool = True,
+) -> dict[str, Any]:
     """Solve one material group by graded relaxation over candidate tiers.
 
     Each tier feeds a widening welding-candidate pool into the restricted MILP.
@@ -1512,6 +1527,7 @@ def _solve_group_scip(group: MaterialGroup, time_limit: float) -> dict[str, Any]
                 cut_composite_cap=TIER_CUT_COMPOSITE_CAP[tier],
                 total_cut_cap=TIER_TOTAL_CUT_CAP[tier],
                 deadline=deadline,
+                enforce_must_use=enforce_must_use,
             )
         except ValueError as exc:
             last_error = exc
@@ -1555,6 +1571,7 @@ def _solve_group_scip_with_candidates(
     cut_composite_cap: int = FULL_CUT_COMPOSITE_CAP,
     total_cut_cap: int | None = None,
     deadline: float | None = None,
+    enforce_must_use: bool = True,
 ) -> dict[str, Any]:
     from pyscipopt import Model, quicksum  # type: ignore[import-not-found]
 
@@ -1635,7 +1652,7 @@ def _solve_group_scip_with_candidates(
         expression = quicksum(x[index] for index in cuts_by_stock[stock.length])
         model.addCons(expression <= stock.quantity)
         usage_by_length[stock.length] = expression
-    if must_use_total > 0:
+    if enforce_must_use and must_use_total > 0:
         z_free = model.addVar(vtype="BINARY", name="use_available_stock")
         used_must_terms = []
         for stock in group.stocks:

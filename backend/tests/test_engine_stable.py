@@ -124,3 +124,118 @@ def test_stable_status_does_not_relabel_timeout_as_infeasible() -> None:
         )
         == "UNSOLVED"
     )
+
+
+def _flat_group(**extra: object) -> dict:
+    payload = {
+        "Pipe": [
+            {
+                "figure_number": "P",
+                "Parent_node": "P",
+                "jlxh": "1",
+                "cube_no": "1",
+                "pipe_length": 100,
+                "pipe_demand": 1,
+                "Max_Weldingjoint_Number": 0,
+            }
+        ],
+        "Stock": [
+            {"stock_length": 50, "stock_demand": 1, "must_use": 1},
+            {"stock_length": 100, "stock_demand": 1, "must_use": 0},
+        ],
+        "NestParam": {"BladeMargin": 0},
+        "Min_Welding_Length": 0,
+        "Weld_Interval_mm": 1,
+        "Max_Joints_Cap": 10,
+    }
+    payload.update(extra)
+    return payload
+
+
+def test_prepare_defaults_enforce_must_use_off_and_keeps_explicit_on() -> None:
+    explicit = _load(FIXTURES / "valid_case.json")["problem"]
+    prepared = prepare_stable_payload(explicit)
+    assert prepared["input"]["NestParam"]["EnforceMustUse"] == 0
+
+    forced = deepcopy(explicit)
+    forced["input"]["NestParam"]["EnforceMustUse"] = 1
+    assert prepare_stable_payload(forced)["input"]["NestParam"]["EnforceMustUse"] == 1
+
+
+def test_stable_must_use_is_off_by_default_and_honoured_when_set() -> None:
+    payload = _flat_group()
+    result = solve_payload(payload, time_limit_seconds=5, engine="stable")
+    prepared = result.pop("_stable_prepared_payload")
+    assert result["status"] == "FEASIBLE"
+    assert verify_solution(prepared, result)["passed"] is True
+    assert prepared["NestParam"]["EnforceMustUse"] == 0
+
+    rejected = verify_solution(prepared, result, enforce_must_use=True)
+    assert any(item["code"] == "MUST_USE_STOCK_NOT_USED" for item in rejected["issues"])
+
+    forced = deepcopy(payload)
+    forced["NestParam"]["EnforceMustUse"] = 1
+    blocked = solve_payload(forced, time_limit_seconds=5, engine="stable")
+    assert blocked["status"] != "FEASIBLE"
+
+
+def test_flexible_packer_opens_the_bar_longest_first_misses() -> None:
+    from collections import Counter
+
+    from app.domain import parse_problem
+    from app.engine_stable import _Pool
+
+    payload = _flat_group()
+    payload["Pipe"][0]["pipe_length"] = 33
+    payload["Pipe"][0]["Max_Weldingjoint_Number"] = 6
+    payload["NestParam"]["BladeMargin"] = 0
+    payload["Stock"] = [
+        {"stock_length": 10, "stock_demand": 2, "must_use": 0},
+        {"stock_length": 14, "stock_demand": 1, "must_use": 0},
+    ]
+    group = parse_problem(payload).groups[0]
+    # Longest-first opens both 10s with a 7 and strands a 4. Finishing the 14
+    # with 7+6 first leaves 5+4 and 7+4 on the 10s.
+    segments = Counter({7: 2, 6: 1, 5: 1, 4: 2})
+    missed = _Pool(group)
+    assert missed.pack_counter(segments, allow_optional=True, seed_must=False) is False
+    packed = _Pool(group)
+    assert packed.pack_flexible(segments) is True
+
+
+def test_multi_stock_embed_rejects_closed_zone_endpoints() -> None:
+    from app.domain import parse_problem
+    from app.engine_stable import _multi_stock_patterns
+
+    payload = _flat_group()
+    payload["Pipe"][0]["pipe_length"] = 300
+    payload["Pipe"][0]["Max_Weldingjoint_Number"] = 4
+    payload["Pipe"][0]["Unweldable_Area"] = [[80, 90]]
+    payload["Stock"] = [
+        {"stock_length": 80, "stock_demand": 10, "must_use": 0},
+        {"stock_length": 140, "stock_demand": 10, "must_use": 0},
+    ]
+    group = parse_problem(payload).groups[0]
+    patterns = _multi_stock_patterns(group.pipes[0], group)
+    assert (140, 80, 80) in patterns
+    for parts in patterns:
+        position = 0
+        for part in parts[:-1]:
+            position += part
+            assert not 80 <= position <= 90
+
+
+def test_patterns_for_keeps_stock_aligned_two_pieces() -> None:
+    from app.domain import parse_problem
+    from app.engine_stable import _patterns_for
+
+    payload = _flat_group()
+    payload["Pipe"][0]["pipe_length"] = 100
+    payload["Pipe"][0]["Max_Weldingjoint_Number"] = 4
+    payload["Stock"] = [
+        {"stock_length": 60, "stock_demand": 4, "must_use": 0},
+        {"stock_length": 40, "stock_demand": 4, "must_use": 0},
+    ]
+    group = parse_problem(payload).groups[0]
+    patterns = _patterns_for(group.pipes[0], group)
+    assert any(60 in parts and 40 in parts for parts in patterns)

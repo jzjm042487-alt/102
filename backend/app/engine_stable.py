@@ -7,17 +7,23 @@ Business rules applied only on this path (the default engine is unchanged):
 
 * omitted ``BladeMargin`` becomes 5 mm; an explicit kerf is kept;
 * ``Min_Welding_Length`` is ignored (forced to 0 for both solver and verifier);
-* the ``length // 3000`` weld cap is not applied; the input joint limit is kept.
+* the ``length // 3000`` weld cap is not applied; the input joint limit is kept;
+* must-use stock is off unless ``NestParam.EnforceMustUse`` is set. Legacy
+  plans do not obey that priority. The baseline engine still enforces it.
+
+Forbidden weld zones stay closed intervals, including both endpoints. A weld
+on an endpoint is illegal and is never copied from a historical plan.
 
 Several constructive strategies share one stock pool. The first legal plan wins.
 """
 
 from __future__ import annotations
 
+import contextvars
 import json
 import os
 import time
-from collections import Counter
+from collections import Counter, defaultdict
 from copy import deepcopy
 from pathlib import Path
 from typing import Any, Callable, Iterable, Mapping, Sequence
@@ -49,6 +55,10 @@ _JOINT_CAP = 1_000_000
 
 Strategy = Callable[[MaterialGroup, float], dict[str, Any] | None]
 
+# Stable search defaults this off. Baseline fallback / SCIP keep their own
+# default of True and do not read this variable.
+_ENFORCE_MUST = contextvars.ContextVar("stable_enforce_must_use", default=False)
+
 
 class _Timeout(Exception):
     """The formal time limit expired before a feasible plan was stored."""
@@ -67,6 +77,27 @@ def _set_blade(node: dict[str, Any], margin: int) -> None:
         nest = {}
         node["NestParam"] = nest
     nest["BladeMargin"] = margin
+
+
+def _has_enforce_must(node: Mapping[str, Any]) -> bool:
+    nest = node.get("NestParam")
+    if isinstance(nest, Mapping) and (
+        "EnforceMustUse" in nest or "enforce_must_use" in nest
+    ):
+        return True
+    return "EnforceMustUse" in node or "enforce_must_use" in node
+
+
+def _default_enforce_must_off(node: dict[str, Any]) -> None:
+    """Write EnforceMustUse=0 when the caller did not set the flag."""
+
+    if _has_enforce_must(node):
+        return
+    nest = node.get("NestParam")
+    if not isinstance(nest, dict):
+        nest = {}
+        node["NestParam"] = nest
+    nest["EnforceMustUse"] = 0
 
 
 def _apply_process_rules(node: dict[str, Any]) -> None:
@@ -156,6 +187,7 @@ def prepare_stable_payload(payload: Mapping[str, Any]) -> dict[str, Any]:
     root, groups = _stable_nodes(prepared)
     if not _has_blade(root):
         _set_blade(root, STABLE_DEFAULT_BLADE_MARGIN_MM)
+    _default_enforce_must_off(root)
     _apply_process_rules(root)
     for group in groups:
         if group is not root:
@@ -233,9 +265,14 @@ class _Pool:
         self.mode = group.kerf_mode
         self.must_left: Counter[int] = Counter()
         self.opt_left: Counter[int] = Counter()
+        enforcing = _ENFORCE_MUST.get()
         for stock in group.stocks:
-            self.must_left[stock.length] += stock.must_use_quantity
-            self.opt_left[stock.length] += stock.quantity - stock.must_use_quantity
+            if enforcing:
+                self.must_left[stock.length] += stock.must_use_quantity
+                self.opt_left[stock.length] += stock.quantity - stock.must_use_quantity
+            else:
+                # The priority is off: every bar is ordinary inventory.
+                self.opt_left[stock.length] += stock.quantity
         self.open_bars: list[_TrackedBar] = []
         self.closed: list[_TrackedBar] = []
         self._empty_cap = {
@@ -468,6 +505,8 @@ class _Pool:
         return True
 
     def _must_respected(self, allow_optional: bool) -> bool:
+        if not _ENFORCE_MUST.get():
+            return True
         unused_must = sum(self.must_left.values())
         used_opt = 0
         for stock in self.group.stocks:
@@ -478,6 +517,161 @@ class _Pool:
         if not allow_optional and used_opt > 0:
             return False
         return True
+
+    def pack_flexible(self, segments: Counter[int]) -> bool:
+        """Finish one bar at a time, with a few opening policies.
+
+        Longest-first tightest-fit strands a piece on the toy
+        ``8,8,7,3,3`` against stocks ``10×2 + 11×1``: both 8s take the 10s.
+        Opening the 11 with 8+3 first leaves a feasible remainder. This packer
+        tries that lookahead, then three backups. It is used only after the
+        counter packer fails, and only while must-use enforcement is off.
+        """
+
+        base = Counter({length: qty for length, qty in segments.items() if qty > 0})
+        if not base:
+            return False
+        saved_must = self.must_left.copy()
+        saved_opt = self.opt_left.copy()
+        policies = (
+            ("largest", "min_remainder"),
+            ("fewest", "shortest"),
+            ("largest", "shortest"),
+            ("largest", "longest"),
+        )
+        for seed_mode, stock_mode in policies:
+            self.must_left = saved_must.copy()
+            self.opt_left = saved_opt.copy()
+            self.open_bars.clear()
+            self.closed.clear()
+            if self._pack_one_policy(base, seed_mode, stock_mode):
+                return True
+        self.must_left = saved_must
+        self.opt_left = saved_opt
+        self.open_bars.clear()
+        self.closed.clear()
+        return False
+
+    def _homes(self, part: int) -> int:
+        total = 0
+        seen: set[int] = set()
+        for stock in self.group.stocks:
+            if stock.length in seen:
+                continue
+            seen.add(stock.length)
+            left = self.must_left[stock.length] + self.opt_left[stock.length]
+            if left > 0 and self._empty_cap.get(stock.length, stock.length) >= part:
+                total += 1
+        return total
+
+    def _open_lengths(self) -> list[int]:
+        lengths: list[int] = []
+        seen: set[int] = set()
+        for stock in self.group.stocks:
+            if stock.length in seen:
+                continue
+            seen.add(stock.length)
+            if self.must_left[stock.length] + self.opt_left[stock.length] > 0:
+                lengths.append(stock.length)
+        return lengths
+
+    def _take_bar(self, length: int) -> bool:
+        if self.must_left[length] > 0:
+            self.must_left[length] -= 1
+            return True
+        if self.opt_left[length] > 0:
+            self.opt_left[length] -= 1
+            return True
+        return False
+
+    def _fill_bar(
+        self, stock: int, counts: Counter[int], seed: int
+    ) -> tuple[list[int], int] | None:
+        bar = _Bar(stock, [], self.mode)
+        if counts[seed] <= 0 or bar.next_capacity(self.kerf) < seed:
+            return None
+        bar.append(seed, self.kerf)
+        parts = [seed]
+        used: Counter[int] = Counter({seed: 1})
+        while True:
+            cap = bar.next_capacity(self.kerf)
+            if cap <= 0:
+                break
+            choices = [
+                length
+                for length, qty in counts.items()
+                if qty > used[length] and 0 < length <= cap
+            ]
+            if not choices:
+                break
+            part = max(choices)
+            bar.append(part, self.kerf)
+            parts.append(part)
+            used[part] += 1
+        return parts, bar.remaining(self.kerf)
+
+    def _choose_filled_stock(
+        self, seed: int, counts: Counter[int], stock_mode: str
+    ) -> tuple[int, list[int]] | None:
+        best: tuple[tuple[int, int, int], int, list[int]] | None = None
+        for stock in self._open_lengths():
+            cap = self._empty_cap.get(stock, stock)
+            if cap < seed:
+                continue
+            filled = self._fill_bar(stock, counts, seed)
+            if filled is None:
+                continue
+            parts, remainder = filled
+            if stock_mode == "shortest":
+                key = (stock, remainder, -len(parts))
+            elif stock_mode == "longest":
+                key = (-stock, remainder, -len(parts))
+            else:
+                key = (remainder, -len(parts), stock)
+            if best is None or key < best[0]:
+                best = (key, stock, parts)
+        if best is None:
+            return None
+        return best[1], best[2]
+
+    def _pack_one_policy(
+        self, base: Counter[int], seed_mode: str, stock_mode: str
+    ) -> bool:
+        counts = base.copy()
+        guard = 0
+        while any(qty > 0 for qty in counts.values()):
+            guard += 1
+            if guard > 100_000:
+                return False
+            live = [length for length, qty in counts.items() if qty > 0]
+            if seed_mode == "fewest":
+                seed = min(live, key=lambda length: (self._homes(length), -length))
+            else:
+                seed = max(live)
+            if self._homes(seed) <= 0:
+                return False
+            chosen = self._choose_filled_stock(seed, counts, stock_mode)
+            if chosen is None:
+                return False
+            stock, parts = chosen
+            recipe = Counter(parts)
+            times = self.must_left[stock] + self.opt_left[stock]
+            for length, qty in recipe.items():
+                if qty <= 0:
+                    return False
+                times = min(times, counts[length] // qty)
+            if times <= 0:
+                return False
+            for _ in range(times):
+                if not self._take_bar(stock):
+                    return False
+                bar = _TrackedBar(stock, self.kerf, self.mode, False)
+                bar.bar.parts = list(parts)
+                bar.cap = 0
+                self.closed.append(bar)
+            for length, qty in recipe.items():
+                counts[length] -= qty * times
+        return self._must_respected(True)
 
     def cut_counts(self) -> list[tuple[_CutCandidate, int]]:
         counter: Counter[tuple[int, tuple[int, ...]]] = Counter()
@@ -810,7 +1004,14 @@ def _patterns_for(pipe: PipeDemand, group: MaterialGroup) -> list[tuple[int, ...
         if len(found) >= 36:
             break
     found.sort(key=lambda parts: (_pattern_waste(parts, group), len(parts), parts))
-    return found[:18]
+    # Keep every pattern that already contains a stock length. The old 18-cap
+    # dropped legal stock two-pieces such as (11000, 1550) once waste ranking
+    # filled the list with other shapes. Other patterns stay capped.
+    stock_lengths = {stock.length for stock in group.stocks}
+    aligned = [parts for parts in found if any(part in stock_lengths for part in parts)]
+    aligned_set = set(aligned)
+    rest = [parts for parts in found if parts not in aligned_set]
+    return aligned + rest[:18]
 
 
 def _geometry_gap(group: MaterialGroup) -> str | None:
@@ -873,6 +1074,8 @@ def _pack_assignment(
     group: MaterialGroup,
     assignment: Sequence[tuple[int, tuple[int, ...], int]],
     started: float,
+    *,
+    flexible: bool = False,
 ) -> dict[str, Any] | None:
     segments: Counter[int] = Counter()
     weld: Counter[tuple[int, tuple[int, ...]]] = Counter()
@@ -886,16 +1089,20 @@ def _pack_assignment(
         weld[(pipe_index, parts)] += qty
     if not segments:
         return None
+    enforcing = _ENFORCE_MUST.get()
     must_qty = sum(stock.must_use_quantity for stock in group.stocks)
-    attempts = [(False, False)]
-    if must_qty:
-        attempts.append((True, True))
-    else:
+    if not enforcing or not must_qty:
         attempts = [(True, False)]
+    else:
+        attempts = [(False, False), (True, True)]
     for allow_optional, seed_must in attempts:
         pool = _Pool(group)
         if pool.pack_counter(segments, allow_optional=allow_optional, seed_must=seed_must):
             return _emit(group, weld, pool.cut_counts(), started)
+        if flexible and not enforcing:
+            fresh = _Pool(group)
+            if fresh.pack_flexible(segments):
+                return _emit(group, weld, fresh.cut_counts(), started)
     return None
 
 
@@ -1518,7 +1725,12 @@ def _strategy_fallback(group: MaterialGroup, deadline: float) -> dict[str, Any] 
     # Leave a slice for the constructive scans that follow this strategy.
     budget = remaining if remaining < 2.5 else max(1.0, remaining * 0.65)
     try:
-        return _solve_group_fallback(group, budget, abort_on_time=True)
+        return _solve_group_fallback(
+            group,
+            budget,
+            abort_on_time=True,
+            enforce_must_use=_ENFORCE_MUST.get(),
+        )
     except (ValueError, TimeoutError, _Timeout):
         return None
 
@@ -1536,7 +1748,9 @@ def _strategy_baseline_master(group: MaterialGroup, deadline: float) -> dict[str
     except Exception:
         return None
     try:
-        return _solve_group_scip(group, remaining)
+        return _solve_group_scip(
+            group, remaining, enforce_must_use=_ENFORCE_MUST.get()
+        )
     except (ValueError, _Timeout):
         return None
 
@@ -1592,6 +1806,743 @@ def _fail_group(
     return result
 
 
+def _local_deadline(deadline: float, budget: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise _Timeout
+    return time.monotonic() + min(budget, remaining)
+
+
+def _budget_expired(local_deadline: float, deadline: float) -> bool:
+    """True when this strategy's own slice is over.
+
+    A global timeout still raises ``_Timeout`` so the group is classified
+    honestly. A local timeout must not consume the formal limit.
+    """
+
+    now = time.monotonic()
+    if now >= deadline:
+        raise _Timeout
+    return now >= local_deadline
+
+
+def _windowed_two_piece(
+    pipe: PipeDemand, group: MaterialGroup, target: int, window: int
+) -> tuple[int, ...] | None:
+    """Two-piece weld near ``target``, never outside ``window`` mm.
+
+    ``_snap_weld`` only returns positions ``weld_allowed`` accepts, so a closed
+    forbidden interval — including both endpoints — cannot become a weld.
+    """
+
+    max_stock = max(stock.length for stock in group.stocks)
+    margin = _min_part(group, multi=True)
+    low = max(margin, pipe.length - max_stock, target - window)
+    high = min(pipe.length - margin, max_stock, target + window)
+    if pipe.max_joints < 1 or low > high:
+        return None
+    weld = _snap_weld(pipe, target, low, high)
+    if weld is None:
+        return None
+    parts = (weld, pipe.length - weld)
+    if min(parts) <= 0 or max(parts) > max_stock:
+        return None
+    return parts if _acceptable(pipe, group, parts) else None
+
+
+def _two_piece_catalogue(
+    pipe: PipeDemand, group: MaterialGroup, *, window: int = 40, limit: int = 8
+) -> list[tuple[int, ...]]:
+    """Stock-aligned two-pieces plus the legal neighbours of each forbidden zone."""
+
+    stocks = sorted({stock.length for stock in group.stocks})
+    targets: list[int] = []
+    for stock in stocks:
+        if stock < pipe.length:
+            targets.append(stock)
+            targets.append(pipe.length - stock)
+    for zone in pipe.forbidden:
+        targets.append(zone.start - 1)
+        targets.append(zone.end + 1)
+    found: list[tuple[int, ...]] = []
+    seen: set[tuple[int, ...]] = set()
+    for target in targets:
+        if target <= 0 or target >= pipe.length:
+            continue
+        parts = _windowed_two_piece(pipe, group, target, window)
+        if parts is None or parts in seen:
+            continue
+        seen.add(parts)
+        found.append(parts)
+        if len(found) >= limit:
+            break
+    return found
+
+
+def _anchor_or_whole(pipe: PipeDemand, group: MaterialGroup) -> tuple[int, ...] | None:
+    max_stock = max(stock.length for stock in group.stocks)
+    if pipe.length <= max_stock:
+        whole = (pipe.length,)
+        if _acceptable(pipe, group, whole):
+            return whole
+    return _peel_pattern(pipe, group, longest_first=True, finish_early=True)
+
+
+def _legal_whole(pipe: PipeDemand, group: MaterialGroup) -> tuple[int, ...] | None:
+    max_stock = max(stock.length for stock in group.stocks)
+    if pipe.length <= max_stock:
+        whole = (pipe.length,)
+        if _acceptable(pipe, group, whole):
+            return whole
+    return None
+
+
+def _complement_patterns_for(
+    pipe: PipeDemand,
+    group: MaterialGroup,
+    seeds: Sequence[int],
+    *,
+    limit: int,
+    window: int = 40,
+) -> list[tuple[int, ...]]:
+    """Two-pieces whose weld sits on the complement of ``seeds`` against a stock.
+
+    ``stock - kerf - seed`` is the piece that shares a bar with ``seed``. The
+    snap stays inside ``window`` and only returns positions ``weld_allowed``
+    accepts, so a closed forbidden interval, endpoints included, is never a weld.
+    """
+
+    stocks = sorted({stock.length for stock in group.stocks}, reverse=True)[:8]
+    kerf = group.blade_margin
+    found: list[tuple[int, ...]] = []
+    seen: set[tuple[int, ...]] = set()
+    ordered: list[int] = []
+    seen_seeds: set[int] = set()
+    for segment in seeds:
+        if segment not in seen_seeds and segment > 0:
+            seen_seeds.add(segment)
+            ordered.append(segment)
+    for segment in ordered:
+        for stock in stocks:
+            base = stock - kerf - segment
+            if base <= 0 or base >= pipe.length:
+                continue
+            parts = _windowed_two_piece(pipe, group, base, window)
+            if parts is not None and parts not in seen:
+                seen.add(parts)
+                found.append(parts)
+            if len(found) >= limit:
+                return found
+    return found
+
+
+def _strategy_cross_complement(group: MaterialGroup, deadline: float) -> dict[str, Any] | None:
+    """Pair two-piece segments from different pipes onto one stock bar.
+
+    A segment ``a`` and a segment ``b`` are complements when ``a + b + kerf``
+    equals a stock length, or falls short of it by at most 5 mm using a shorter
+    legal segment. Weld positions stay inside the closed-zone rule.
+    """
+
+    if len(group.pipes) < 2:
+        return None
+    local = _local_deadline(deadline, 1.2)
+    started = time.monotonic()
+    wide = len(group.pipes) > 12 or sum(pipe.demand for pipe in group.pipes) > 800
+    pack_limit = 12 if wide else 28
+    try:
+        wholes: list[tuple[int, ...] | None] = []
+        initial: list[list[tuple[int, ...]]] = []
+        seeds: set[int] = set()
+        catalogue_limit = 4 if wide else 6
+        for pipe in group.pipes:
+            if _budget_expired(local, deadline):
+                return None
+            whole = _legal_whole(pipe, group)
+            wholes.append(whole)
+            if whole is not None:
+                seeds.add(pipe.length)
+            patterns = _two_piece_catalogue(pipe, group, limit=catalogue_limit)
+            initial.append(patterns)
+            for parts in patterns:
+                seeds.update(parts)
+        stock_lengths = {stock.length for stock in group.stocks}
+        whole_lengths = {pipe.length for pipe in group.pipes}
+        preferred = sorted(segment for segment in seeds if segment in stock_lengths)
+        preferred += sorted(segment for segment in seeds if segment in whole_lengths)
+        remainder = [
+            segment
+            for segment in sorted(seeds, reverse=True)
+            if segment not in stock_lengths and segment not in whole_lengths
+        ]
+        seed_list = preferred + remainder[:8]
+        menus: list[list[tuple[int, ...]]] = []
+        complement_limit = 3 if wide else 4
+        for pipe, patterns in zip(group.pipes, initial):
+            if _budget_expired(local, deadline):
+                return None
+            own_seeds = [pipe.length] if pipe.length in whole_lengths else []
+            stock_patterns = [
+                parts
+                for parts in patterns
+                if any(part in stock_lengths for part in parts)
+            ]
+            ordered_parts = (
+                stock_patterns[:3]
+                + _complement_patterns_for(pipe, group, own_seeds, limit=complement_limit)
+                + _complement_patterns_for(pipe, group, seed_list, limit=complement_limit)
+            )
+            merged: list[tuple[int, ...]] = []
+            seen_parts: set[tuple[int, ...]] = set()
+            for parts in ordered_parts:
+                if parts not in seen_parts:
+                    seen_parts.add(parts)
+                    merged.append(parts)
+            menus.append(merged[:8])
+        anchors: list[tuple[int, ...]] = []
+        for index, pipe in enumerate(group.pipes):
+            if wholes[index] is not None:
+                anchors.append(wholes[index])
+            elif menus[index]:
+                anchors.append(menus[index][0])
+            else:
+                fallback = _anchor_or_whole(pipe, group)
+                if fallback is None:
+                    return None
+                anchors.append(fallback)
+        stocks = sorted({stock.length for stock in group.stocks}, reverse=True)
+        kerf = group.blade_margin
+        index_by_segment: dict[int, list[tuple[int, tuple[int, ...]]]] = defaultdict(list)
+        for pipe_index, patterns in enumerate(menus):
+            for parts in patterns:
+                for segment in set(parts):
+                    index_by_segment[segment].append((pipe_index, parts))
+            if wholes[pipe_index] is not None:
+                index_by_segment[wholes[pipe_index][0]].append(
+                    (pipe_index, wholes[pipe_index])
+                )
+        hits: list[tuple[int, int, tuple[int, ...], int, tuple[int, ...]]] = []
+        focus = stock_lengths | whole_lengths
+        for host in stocks:
+            for segment, owners in index_by_segment.items():
+                if segment not in focus:
+                    continue
+                base = host - kerf - segment
+                if base <= 0:
+                    continue
+                for delta in range(0, 6):
+                    partners = index_by_segment.get(base - delta)
+                    if not partners:
+                        continue
+                    for left_index, left_parts in owners:
+                        for right_index, right_parts in partners:
+                            if left_index >= right_index:
+                                continue
+                            hits.append(
+                                (delta, left_index, left_parts, right_index, right_parts)
+                            )
+                            if len(hits) >= 32:
+                                break
+                        if len(hits) >= 32:
+                            break
+                    if len(hits) >= 32:
+                        break
+                if len(hits) >= 32:
+                    break
+            if len(hits) >= 32:
+                break
+        hits.sort(
+            key=lambda item: (
+                item[0],
+                0
+                if any(part in stock_lengths for part in item[2] + item[4])
+                else 1,
+                max(group.pipes[item[1]].demand, group.pipes[item[3]].demand),
+            )
+        )
+        attempts = 0
+
+        def pack_rows(
+            rows: list[tuple[int, tuple[int, ...], int]],
+        ) -> dict[str, Any] | None:
+            nonlocal attempts
+            if attempts >= pack_limit or _budget_expired(local, deadline):
+                return None
+            attempts += 1
+            return _pack_assignment(group, rows, started, flexible=True)
+
+        def rows_for(
+            choice: Sequence[tuple[int, ...]],
+            split: tuple[int, tuple[int, ...], int] | None = None,
+        ) -> list[tuple[int, tuple[int, ...], int]]:
+            rows: list[tuple[int, tuple[int, ...], int]] = []
+            for pipe_index, pipe in enumerate(group.pipes):
+                if split is not None and split[0] == pipe_index:
+                    _index, pattern, count = split
+                    rest = pipe.demand - count
+                    if rest > 0:
+                        rows.append((pipe_index, choice[pipe_index], rest))
+                    if count > 0:
+                        rows.append((pipe_index, pattern, count))
+                else:
+                    rows.append((pipe_index, choice[pipe_index], pipe.demand))
+            return rows
+
+        def split_counts(demand: int) -> list[int]:
+            counts: list[int] = []
+            for divisor in (2, 3, 4, 5):
+                count = demand // divisor
+                if 0 < count < demand and count not in counts:
+                    counts.append(count)
+            return counts
+
+        choices: list[list[tuple[int, ...]]] = []
+        seen_choice: set[tuple[tuple[int, ...], ...]] = set()
+        for _delta, left_index, left_parts, right_index, right_parts in hits[:12]:
+            choice = list(anchors)
+            choice[left_index] = left_parts
+            choice[right_index] = right_parts
+            key = tuple(choice)
+            if key in seen_choice:
+                continue
+            seen_choice.add(key)
+            choices.append(choice)
+        if not choices:
+            choices.append(list(anchors))
+        for choice in choices:
+            found = pack_rows(rows_for(choice))
+            if found is not None:
+                return found
+            for pipe_index, pipe in enumerate(group.pipes):
+                if wholes[pipe_index] is None:
+                    continue
+                if choice[pipe_index] != anchors[pipe_index]:
+                    continue
+                def _own_complement(parts: tuple[int, ...]) -> int:
+                    for stock in stocks:
+                        piece = stock - kerf - pipe.length
+                        if piece in parts:
+                            return 0
+                    return 1
+
+                alternates = sorted(
+                    (parts for parts in menus[pipe_index] if parts != wholes[pipe_index]),
+                    key=_own_complement,
+                )[:2]
+                # The copies that are not the new pattern stay whole when that
+                # whole pipe fits a bar. That is the 60/30 shape: most copies
+                # remain one piece, and the rest supply the complement.
+                base_choice = list(choice)
+                if wholes[pipe_index] is not None:
+                    base_choice[pipe_index] = wholes[pipe_index]
+                for alternate in alternates:
+                    for count in split_counts(pipe.demand)[:2]:
+                        if attempts >= pack_limit or _budget_expired(local, deadline):
+                            return None
+                        found = pack_rows(
+                            rows_for(base_choice, (pipe_index, alternate, count))
+                        )
+                        if found is not None:
+                            return found
+    except _Timeout:
+        if time.monotonic() >= deadline:
+            raise
+        return None
+    return None
+
+
+def _multi_stock_patterns(pipe: PipeDemand, group: MaterialGroup) -> list[tuple[int, ...]]:
+    """Embed k stock lengths and place the remnant in every slot.
+
+    Remnant-first, middle, and last are all emitted. ``_acceptable`` rejects a
+    weld that lands inside a closed forbidden interval, including its endpoints.
+    """
+
+    max_stock = max(stock.length for stock in group.stocks)
+    stocks = sorted({stock.length for stock in group.stocks if 0 < stock.length < pipe.length})
+    if not stocks or pipe.max_joints < 1:
+        return []
+    stock_set = set(stocks)
+    found: list[tuple[int, ...]] = []
+    seen: set[tuple[int, ...]] = set()
+
+    def add(parts: tuple[int, ...]) -> None:
+        if parts in seen:
+            return
+        if _acceptable(pipe, group, parts):
+            seen.add(parts)
+            found.append(parts)
+
+    def emit(pieces: list[int]) -> None:
+        total = sum(pieces)
+        remnant = pipe.length - total
+        if remnant <= 0 or remnant > max_stock:
+            return
+        if len(pieces) > pipe.max_joints:
+            return
+        for slot in range(len(pieces) + 1):
+            add(tuple(pieces[:slot] + [remnant] + pieces[slot:]))
+
+    # Long stocks first. Short-stock pairs filled the old cap and dropped
+    # embeddings such as (remnant, 12200, 12200).
+    long_stocks = sorted(stocks, reverse=True)[:8]
+    for stock in long_stocks:
+        emit([stock])
+    if pipe.max_joints >= 2:
+        for left in long_stocks:
+            for right in long_stocks:
+                emit([left, right])
+    if pipe.length > 2 * max_stock and pipe.max_joints >= 3:
+        longest = long_stocks[:3]
+        for first in longest:
+            for second in longest:
+                for third in longest:
+                    emit([first, second, third])
+
+    def remnant_slot(parts: tuple[int, ...]) -> int:
+        for index, part in enumerate(parts):
+            if part not in stock_set:
+                return index
+        return len(parts)
+
+    available = {stock.length: stock.quantity for stock in group.stocks}
+
+    def fits_demand(parts: tuple[int, ...]) -> int:
+        used: Counter[int] = Counter(part for part in parts if part in stock_set)
+        return int(
+            all(available.get(length, 0) >= count * pipe.demand for length, count in used.items())
+        )
+
+    found.sort(
+        key=lambda parts: (
+            -fits_demand(parts),
+            -sum(part for part in parts if part in stock_set),
+            remnant_slot(parts),
+            parts,
+        )
+    )
+    fitting = [parts for parts in found if fits_demand(parts)]
+    return (fitting or found)[:16]
+
+
+def _strategy_multi_stock_embed(group: MaterialGroup, deadline: float) -> dict[str, Any] | None:
+    """Place whole stock pieces inside a longer pipe, remnant in each slot."""
+
+    max_stock = max(stock.length for stock in group.stocks)
+    if all(pipe.length <= max_stock for pipe in group.pipes):
+        return None
+    local = _local_deadline(deadline, 1.0)
+    started = time.monotonic()
+    try:
+        menus: list[list[tuple[int, ...]]] = []
+        for pipe in group.pipes:
+            if _budget_expired(local, deadline):
+                return None
+            if pipe.length <= max_stock:
+                whole = (pipe.length,)
+                menus.append([whole] if _acceptable(pipe, group, whole) else [])
+            else:
+                menus.append(_multi_stock_patterns(pipe, group)[:12])
+        if any(not menu for menu in menus):
+            return None
+        pack_limit = 6 if len(group.pipes) > 8 else 10
+        attempts = 0
+
+        def pack_rows(rows: list[tuple[int, tuple[int, ...], int]]) -> dict[str, Any] | None:
+            nonlocal attempts
+            if attempts >= pack_limit or _budget_expired(local, deadline):
+                return None
+            attempts += 1
+            return _pack_assignment(group, rows, started, flexible=True)
+
+        def rows_at(slot: int) -> list[tuple[int, tuple[int, ...], int]]:
+            rows = []
+            for index, pipe in enumerate(group.pipes):
+                menu = menus[index]
+                parts = menu[min(slot, len(menu) - 1)]
+                rows.append((index, parts, pipe.demand))
+            return rows
+
+        stock_lengths = {stock.length for stock in group.stocks}
+        available = {stock.length: stock.quantity for stock in group.stocks}
+
+        def rows_within_budget(order: Sequence[int]) -> list[tuple[int, tuple[int, ...], int]] | None:
+            left = dict(available)
+            chosen: dict[int, tuple[int, ...]] = {}
+            for index in order:
+                pipe = group.pipes[index]
+                pick: tuple[int, ...] | None = None
+                for parts in menus[index]:
+                    used = Counter(part for part in parts if part in stock_lengths)
+                    if all(left.get(length, 0) >= count * pipe.demand for length, count in used.items()):
+                        pick = parts
+                        for length, count in used.items():
+                            left[length] -= count * pipe.demand
+                        break
+                if pick is None:
+                    return None
+                chosen[index] = pick
+            return [
+                (index, chosen[index], group.pipes[index].demand)
+                for index in range(len(group.pipes))
+            ]
+
+        longest_order = sorted(range(len(group.pipes)), key=lambda index: -group.pipes[index].length)
+        demand_order = sorted(range(len(group.pipes)), key=lambda index: -group.pipes[index].demand)
+        for order in (longest_order, demand_order):
+            budgeted = rows_within_budget(order)
+            if budgeted is None:
+                continue
+            found = pack_rows(budgeted)
+            if found is not None:
+                return found
+        found = pack_rows(rows_at(0))
+        if found is not None:
+            return found
+        longest_pipe = max(range(len(group.pipes)), key=lambda index: group.pipes[index].length)
+        for slot in range(1, min(8, len(menus[longest_pipe]))):
+            rows = rows_at(0)
+            menu = menus[longest_pipe]
+            rows[longest_pipe] = (longest_pipe, menu[slot], group.pipes[longest_pipe].demand)
+            found = pack_rows(rows)
+            if found is not None:
+                return found
+            if _budget_expired(local, deadline):
+                return None
+    except _Timeout:
+        if time.monotonic() >= deadline:
+            raise
+        return None
+    return None
+
+
+def _strategy_shared_tail(group: MaterialGroup, deadline: float) -> dict[str, Any] | None:
+    """Split the head of a two-piece whose tail is shared across pipes.
+
+    The tail stays intact. The head is cut so one new piece and a short segment
+    from the group fill one stock bar. Orders are the ones ``_split_piece``
+    accepts, which refuses a weld on a closed-zone endpoint.
+    """
+
+    if all(pipe.max_joints < 2 for pipe in group.pipes):
+        return None
+    local = _local_deadline(deadline, 1.0)
+    started = time.monotonic()
+    try:
+        catalogues = []
+        for pipe in group.pipes:
+            if _budget_expired(local, deadline):
+                return None
+            catalogues.append(_two_piece_catalogue(pipe, group, limit=6))
+        whole_lengths = [
+            pipe.length for pipe in group.pipes if _legal_whole(pipe, group) is not None
+        ]
+        for pipe_index, pipe in enumerate(group.pipes):
+            if _budget_expired(local, deadline):
+                return None
+            for parts in _complement_patterns_for(pipe, group, whole_lengths, limit=4):
+                if parts not in catalogues[pipe_index]:
+                    catalogues[pipe_index].append(parts)
+        tail_owners: dict[int, set[int]] = defaultdict(set)
+        shorts: set[int] = set()
+        for pipe_index, patterns in enumerate(catalogues):
+            for parts in patterns:
+                if len(parts) != 2:
+                    continue
+                tail = min(parts)
+                shorts.add(tail)
+                tail_owners[tail].add(pipe_index)
+        kerf = group.blade_margin
+        complement_tails: set[int] = set()
+        for length in whole_lengths:
+            for stock in {item.length for item in group.stocks}:
+                tail = stock - kerf - length
+                if 0 < tail < length:
+                    complement_tails.add(tail)
+        if len(group.pipes) == 1:
+            shared = set(tail_owners) | complement_tails
+        else:
+            shared = {
+                tail for tail, owners in tail_owners.items() if len(owners) >= 2
+            } | complement_tails
+        if not shared:
+            return None
+        stocks = sorted({stock.length for stock in group.stocks})
+        short_list = sorted(shorts)[:8]
+        splits: list[list[tuple[int, ...]]] = []
+        bases: list[tuple[int, ...] | None] = []
+        for pipe_index, pipe in enumerate(group.pipes):
+            if _budget_expired(local, deadline):
+                return None
+            pipe_splits: list[tuple[int, ...]] = []
+            base: tuple[int, ...] | None = None
+            for parts in catalogues[pipe_index]:
+                if len(parts) != 2 or pipe.max_joints < 2:
+                    continue
+                tail = min(parts)
+                if tail not in shared:
+                    continue
+                if base is None:
+                    base = parts
+                head = max(parts)
+                head_index = parts.index(head)
+                for short in short_list:
+                    for host in stocks:
+                        raw = host - kerf - short
+                        for delta in (0, 1, 2, 3, 4, 5):
+                            guess = raw - delta
+                            if guess <= 0 or guess >= head:
+                                continue
+                            rebuilt = _split_piece(pipe, group, parts, head_index, guess)
+                            if rebuilt is not None and rebuilt not in pipe_splits:
+                                pipe_splits.append(rebuilt)
+                            if len(pipe_splits) >= 8:
+                                break
+                        if len(pipe_splits) >= 8:
+                            break
+                    if len(pipe_splits) >= 8:
+                        break
+                if len(pipe_splits) >= 8:
+                    break
+            splits.append(pipe_splits)
+            bases.append(base if base is not None else _anchor_or_whole(pipe, group))
+        if any(base is None for base in bases):
+            return None
+        if not any(splits):
+            return None
+
+        def pack_choice(choice: Sequence[tuple[int, ...]]) -> dict[str, Any] | None:
+            if _budget_expired(local, deadline):
+                return None
+            rows = [
+                (index, choice[index], pipe.demand)
+                for index, pipe in enumerate(group.pipes)
+                if choice[index] is not None
+            ]
+            return _pack_assignment(group, rows, started, flexible=True)
+
+        choice = [base for base in bases if base is not None]
+        # Replace each pipe that has a split with its first split, one pipe at a time.
+        found = None
+        attempts = 0
+        pack_limit = 8 if len(group.pipes) > 8 else 16
+        for pipe_index, pipe_splits in enumerate(splits):
+            for parts in pipe_splits:
+                if attempts >= pack_limit or _budget_expired(local, deadline):
+                    return None
+                trial = list(choice)
+                trial[pipe_index] = parts
+                attempts += 1
+                found = pack_choice(trial)
+                if found is not None:
+                    return found
+        # All pipes that have a split use that split together.
+        if attempts < pack_limit:
+            trial = list(choice)
+            changed = False
+            for pipe_index, pipe_splits in enumerate(splits):
+                if pipe_splits:
+                    trial[pipe_index] = pipe_splits[0]
+                    changed = True
+            if changed:
+                found = pack_choice(trial)
+                if found is not None:
+                    return found
+    except _Timeout:
+        if time.monotonic() >= deadline:
+            raise
+        return None
+    return None
+
+
+def _strategy_short_stock_split(group: MaterialGroup, deadline: float) -> dict[str, Any] | None:
+    """Single pipe type: split the long side so a short stock can be filled."""
+
+    if len(group.pipes) != 1:
+        return None
+    pipe = group.pipes[0]
+    if pipe.max_joints < 2:
+        return None
+    local = _local_deadline(deadline, 0.8)
+    started = time.monotonic()
+    try:
+        bases = _two_piece_catalogue(pipe, group, limit=8)
+        if not bases:
+            peeled = _peel_pattern(pipe, group, longest_first=True, finish_early=False)
+            if peeled is not None and len(peeled) == 2:
+                bases = [peeled]
+        if not bases:
+            return None
+        stocks = sorted({stock.length for stock in group.stocks})
+        kerf = group.blade_margin
+        patterns: list[tuple[int, ...]] = []
+        seen: set[tuple[int, ...]] = set()
+
+        def add(parts: tuple[int, ...] | None) -> None:
+            if parts is not None and parts not in seen:
+                seen.add(parts)
+                patterns.append(parts)
+
+        for base in bases:
+            if _budget_expired(local, deadline):
+                return None
+            if len(base) != 2:
+                continue
+            long_index = 0 if base[0] >= base[1] else 1
+            long_len = base[long_index]
+            short_seg = base[1 - long_index]
+            for host in stocks:
+                if host >= pipe.length:
+                    continue
+                for copies in range(1, 5):
+                    filler = host - copies * short_seg - copies * kerf
+                    if filler <= 0:
+                        break
+                    if 0 < filler < long_len:
+                        add(_split_piece(pipe, group, base, long_index, filler))
+                for copies in range(2, 5):
+                    span = host - (copies - 1) * kerf
+                    if span <= 0 or span % copies != 0:
+                        continue
+                    piece = span // copies
+                    if 0 < piece < long_len:
+                        add(_split_piece(pipe, group, base, long_index, piece))
+                if len(patterns) >= 16:
+                    break
+            if len(patterns) >= 16:
+                break
+        whole = _legal_whole(pipe, group)
+        for parts in patterns[:16]:
+            if _budget_expired(local, deadline):
+                return None
+            found = _pack_assignment(
+                group, [(0, parts, pipe.demand)], started, flexible=True
+            )
+            if found is not None:
+                return found
+            if whole is None:
+                continue
+            for divisor in (2, 3, 4, 5):
+                count = pipe.demand // divisor
+                if count <= 0 or count >= pipe.demand:
+                    continue
+                if _budget_expired(local, deadline):
+                    return None
+                found = _pack_assignment(
+                    group,
+                    [(0, whole, pipe.demand - count), (0, parts, count)],
+                    started,
+                    flexible=True,
+                )
+                if found is not None:
+                    return found
+    except _Timeout:
+        if time.monotonic() >= deadline:
+            raise
+        return None
+    return None
+
+
 def _strategies() -> list[tuple[str, str, Strategy]]:
     """(name, result_source, function). Order is the feasibility search order."""
 
@@ -1624,6 +2575,10 @@ def _strategies() -> list[tuple[str, str, Strategy]]:
         ("uniform-6", "native", lambda group, deadline: _strategy_uniform(group, deadline, 6)),
         ("stock-tail", "native", _strategy_stock_tail),
         ("complement-mix", "native", _strategy_complement),
+        ("cross-complement", "native", _strategy_cross_complement),
+        ("multi-stock-embed", "native", _strategy_multi_stock_embed),
+        ("shared-tail", "native", _strategy_shared_tail),
+        ("short-stock-split", "native", _strategy_short_stock_split),
         ("group-fallback", "fallback", _strategy_fallback),
         ("pattern-scan", "native", _strategy_pattern_scan),
         (
@@ -1666,6 +2621,30 @@ def _checkpoint_store(path: str | None, payload: Mapping[str, Any]) -> None:
 
 
 def solve_group_stable(
+    group: MaterialGroup,
+    time_limit: float,
+    *,
+    checkpoint_path: str | None = None,
+    checkpoint_state: dict[str, Any] | None = None,
+    group_index: int = 0,
+    enforce_must_use: bool | None = None,
+) -> dict[str, Any]:
+    token = _ENFORCE_MUST.set(
+        _ENFORCE_MUST.get() if enforce_must_use is None else bool(enforce_must_use)
+    )
+    try:
+        return _solve_group_stable_body(
+            group,
+            time_limit,
+            checkpoint_path=checkpoint_path,
+            checkpoint_state=checkpoint_state,
+            group_index=group_index,
+        )
+    finally:
+        _ENFORCE_MUST.reset(token)
+
+
+def _solve_group_stable_body(
     group: MaterialGroup,
     time_limit: float,
     *,
@@ -1738,7 +2717,12 @@ def solve_stable_problem(
     time_limit_seconds: float,
     *,
     checkpoint_path: str | None = None,
+    enforce_must_use: bool | None = None,
 ) -> list[dict[str, Any]]:
+    if enforce_must_use is None:
+        from .verifier import must_use_enforced
+
+        enforce_must_use = must_use_enforced(problem.source)
     state = _checkpoint_load(checkpoint_path, problem.task_id) or {
         "task_id": problem.task_id,
         "groups": [],
@@ -1761,6 +2745,7 @@ def solve_stable_problem(
             checkpoint_path=checkpoint_path,
             checkpoint_state=state,
             group_index=index,
+            enforce_must_use=enforce_must_use,
         )
         groups.append(result)
         state["groups"] = groups
