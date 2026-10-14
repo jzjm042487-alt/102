@@ -226,7 +226,9 @@ def run(workers: int) -> int:
     if not pending:
         handle.close()
         return summarize(OUT_CSV)
-    context = multiprocessing.get_context("fork")
+    # spawn so each case can exit after one task and release the column-generation
+    # model. fork cannot combine with max_tasks_per_child.
+    context = multiprocessing.get_context("spawn")
     wrote = 0
     with ProcessPoolExecutor(max_workers=max(1, workers), mp_context=context, max_tasks_per_child=1) as pool:
         futures = {
