@@ -9,11 +9,12 @@ stock-boundary welds. Pricing then adds a few complement lengths that
 exact-fill a stock with a length already in the alphabet. Three-piece
 patterns are generated only after two-piece pricing adds nothing.
 
-When that ordinary restricted master is infeasible and a pipe is longer than
-every stock, a second master sees splits of that pipe into pieces taken from
-the stock lengths and those lengths minus a few kerfs, on welds the forbidden
-zones still allow. Those columns are not written back, so later ordinary
-tiers keep the pattern family that already solved earlier cases.
+When a pipe is longer than every stock, an opening search first tries splits
+into pieces taken from the stock lengths and those lengths minus a few kerfs,
+on welds the forbidden zones still allow. That search keeps at most 30% of
+the deadline and at most 18 seconds. The ordinary search then runs on the
+full remaining time and its plan wins; the opening plan is used only when
+the ordinary search ends without one.
 
 The alphabet, the number of new lengths per round, the patterns per pipe, and
 the cut-column list start small and double when the restricted master is
@@ -80,6 +81,11 @@ _LOG_KEEP = 24
 _NEAR_STOCK_KEEP = 8
 _NEAR_STOCK_BRANCH = 4
 _NEAR_STOCK_NODES = 400
+# Opening search for pipes longer than every stock. It never replaces a plan
+# the ordinary search still finds, and it never takes more than 30% of the
+# deadline or 18 seconds.
+_NEAR_STOCK_PREFIX_CAP = 18.0
+_NEAR_STOCK_PREFIX_SHARE = 0.3
 
 
 def _tier() -> int:
@@ -143,19 +149,58 @@ def mark_ondemand_timeout() -> None:
     _NOTE.set("按需生成时限内未知")
 
 
+def _overlong_pipes(group: MaterialGroup) -> bool:
+    if not group.stocks or not group.pipes:
+        return False
+    max_stock = max(stock.length for stock in group.stocks)
+    return any(
+        pipe.length > max_stock and pipe.max_joints >= 1 for pipe in group.pipes
+    )
+
+
 def solve_group_ondemand(group: MaterialGroup, deadline: float) -> dict | None:
     """Return one verifier-sized plan, or None if this restriction fails."""
 
     _NOTE.set("")
     _LOG.set("")
     _TIER.set(0)
+    held: dict | None = None
+    held_log = ""
     try:
         if time.monotonic() >= deadline:
             _NOTE.set("按需生成时限内未知")
             _LOG.set("timeout")
             raise _Timeout
-        return _search(group, deadline)
+        if _overlong_pipes(group):
+            remaining = deadline - time.monotonic()
+            share = min(
+                _NEAR_STOCK_PREFIX_CAP,
+                max(remaining * _NEAR_STOCK_PREFIX_SHARE, min(8.0, remaining - 0.5)),
+            )
+            if share >= 0.8:
+                try:
+                    held = _search(
+                        group, time.monotonic() + share, near_stock=True
+                    )
+                except _Timeout:
+                    held = None
+                held_log = _LOG.get()
+                _NOTE.set("")
+                _LOG.set("")
+                _TIER.set(0)
+        found = _search(group, deadline)
+        if found is not None:
+            return found
+        if held is not None:
+            _LOG.set(held_log)
+            _NOTE.set("")
+            return held
+        return None
     except _Timeout:
+        if held is not None:
+            _LOG.set(held_log)
+            _NOTE.set("")
+            return held
         if not _NOTE.get():
             _NOTE.set("按需生成时限内未知")
         log = _LOG.get()
@@ -171,7 +216,9 @@ def solve_group_ondemand(group: MaterialGroup, deadline: float) -> dict | None:
         _TIER.set(0)
 
 
-def _search(group: MaterialGroup, deadline: float) -> dict | None:
+def _search(
+    group: MaterialGroup, deadline: float, *, near_stock: bool = False
+) -> dict | None:
     if _ENFORCE_MUST.get() and any(stock.must_use_quantity > 0 for stock in group.stocks):
         _NOTE.set("按需生成跳过：本条打开了必用料，可行性模型不执行该优先级")
         return None
@@ -189,6 +236,25 @@ def _search(group: MaterialGroup, deadline: float) -> dict | None:
     fine = _small_group(group)
     pools = _seed_menus(group, fine=fine)
     stock_lengths = set(_avail(group))
+    long_pipes: set[int] = set()
+    menu_lengths: set[int] | None = None
+    if near_stock and stock_lengths:
+        max_stock = max(stock_lengths)
+        long_pipes = {
+            index
+            for index, pipe in enumerate(group.pipes)
+            if pipe.length > max_stock and pipe.max_joints >= 1
+        }
+        if long_pipes:
+            menu_lengths = set(_near_stock_menu(group))
+            for index in long_pipes:
+                bucket = pools[index]
+                for parts in _near_stock_patterns(group.pipes[index], group):
+                    if parts in bucket:
+                        continue
+                    if len(bucket) >= _pool_cap():
+                        bucket.pop()
+                    bucket.append(parts)
     tier = 0
     idle = 0
     prev_admitted = 0
@@ -198,7 +264,13 @@ def _search(group: MaterialGroup, deadline: float) -> dict | None:
         while True:
             _TIER.set(tier)
             _ensure_time(deadline)
-            menus = _limit_alphabet([list(item) for item in pools], stock_lengths)
+            menus = _limit_alphabet(
+                [list(item) for item in pools],
+                stock_lengths,
+                long_pipes if near_stock else None,
+                menu_lengths,
+                prefer_menu=near_stock and bool(long_pipes),
+            )
             dropped: set[int] = set()
             window = _WINDOWS[min(tier, len(_WINDOWS) - 1)]
             before = sum(len(menu) for menu in pools)
@@ -275,55 +347,6 @@ def _search(group: MaterialGroup, deadline: float) -> dict | None:
         raise
 
 
-def _augmented_near_stock_plan(
-    group: MaterialGroup,
-    pools: list[list[tuple[int, ...]]],
-    deadline: float,
-    cp_model,
-    stock_lengths: set[int],
-) -> dict | None:
-    """Re-select patterns after the ordinary master is infeasible.
-
-    Long pipes prefer pieces on the stock menu, and the near-stock splits are
-    visible to that selection. Nothing is written back to ``pools``, so the
-    ordinary tiers keep the pattern family that already solved earlier cases.
-    """
-
-    if not stock_lengths or deadline - time.monotonic() < 0.8:
-        return None
-    max_stock = max(stock_lengths)
-    long = {
-        index
-        for index, pipe in enumerate(group.pipes)
-        if pipe.length > max_stock and pipe.max_joints >= 1
-    }
-    if not long:
-        return None
-    copied = [list(menu) for menu in pools]
-    for index in long:
-        have = set(copied[index])
-        for parts in _near_stock_patterns(group.pipes[index], group):
-            if parts not in have:
-                copied[index].append(parts)
-                have.add(parts)
-    limited = _limit_alphabet(
-        copied,
-        stock_lengths,
-        long,
-        set(_near_stock_menu(group)),
-    )
-    if any(not menu for menu in limited):
-        return None
-    slice_cap = 14.0 if _alphabet_cap() >= 64 else 4.0
-    try:
-        _status, plan, _missing, _weak = _solve_master(
-            group, limited, deadline, cp_model, slice_cap=slice_cap
-        )
-    except _Timeout:
-        return None
-    return plan
-
-
 def _expand_once(
     group: MaterialGroup,
     menus: list[list[tuple[int, ...]]],
@@ -349,11 +372,6 @@ def _expand_once(
         )
         if plan is not None or status in ("broken", "unknown"):
             return status, plan, missing
-        extra = _augmented_near_stock_plan(
-            group, pools, deadline, cp_model, stock_lengths
-        )
-        if extra is not None:
-            return "feasible", extra, []
     if missing:
         _drop_unsourcable(menus, set(missing))
         dropped.update(missing)
@@ -718,14 +736,15 @@ def _limit_alphabet(
     stock_lengths: set[int],
     long_pipes: set[int] | None = None,
     menu_lengths: set[int] | None = None,
+    prefer_menu: bool = False,
 ) -> list[list[tuple[int, ...]]]:
     """Keep at most the current tier's alphabet of distinct piece lengths.
 
     A pipe with no pattern is served before a pipe that already has one, and
     a pattern that reuses lengths already chosen is preferred. Otherwise the
     first pipes fill the alphabet and later pipes never reach the master.
-    Pipes longer than every stock prefer pieces that sit on the near-stock
-    menu; shorter pipes keep the previous ranking.
+    The opening search for pipes longer than every stock ranks pieces on the
+    near-stock menu ahead of that reuse rule. The ordinary search does not.
     """
 
     long = long_pipes or set()
@@ -744,18 +763,24 @@ def _limit_alphabet(
                 if len(used) + len(extra) > _alphabet_cap():
                     continue
                 aligned = sum(1 for part in parts if part in stock_lengths)
-                if pipe_index in long and len(parts) >= 2:
-                    align_key = -sum(1 for part in parts if part in menu)
+                if prefer_menu and pipe_index in long and len(parts) >= 2:
+                    cand = (
+                        0 if not chosen[pipe_index] else 1,
+                        -sum(1 for part in parts if part in menu),
+                        len(extra),
+                        len(parts),
+                        pipe_index,
+                        parts,
+                    )
                 else:
-                    align_key = aligned
-                cand = (
-                    0 if not chosen[pipe_index] else 1,
-                    len(extra),
-                    align_key,
-                    len(parts),
-                    pipe_index,
-                    parts,
-                )
+                    cand = (
+                        0 if not chosen[pipe_index] else 1,
+                        len(extra),
+                        aligned,
+                        len(parts),
+                        pipe_index,
+                        parts,
+                    )
                 if best is None or cand < best:
                     best = cand
         if best is None:
