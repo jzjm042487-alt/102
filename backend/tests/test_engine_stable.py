@@ -267,13 +267,14 @@ def test_existing_strategy_order_matches_the_previous_round() -> None:
         "baseline-restricted-master",
     ]
     assert "cpsat-feasibility" not in names
+    assert "ondemand-pricing" not in names
 
 
 def test_cpsat_runs_only_after_existing_strategies_and_on_its_own_clock(monkeypatch) -> None:
     import time
 
     from app.domain import parse_problem
-    from app.engine_stable import _CPSAT_LIMIT, solve_group_stable
+    from app.engine_stable import _CPSAT_LIMIT, _ONDEMAND_LIMIT, solve_group_stable
 
     calls: list[float] = []
 
@@ -289,9 +290,11 @@ def test_cpsat_runs_only_after_existing_strategies_and_on_its_own_clock(monkeypa
     payload = _flat_group()
     group = parse_problem(payload).groups[0]
     token = _CPSAT_LIMIT.set(1.25)
+    ondemand = _ONDEMAND_LIMIT.set(0)
     try:
         result = solve_group_stable(group, 0.05)
     finally:
+        _ONDEMAND_LIMIT.reset(ondemand)
         _CPSAT_LIMIT.reset(token)
     assert len(calls) == 1
     assert 1.0 <= calls[0] <= 1.25
@@ -399,3 +402,317 @@ def test_cpsat_plan_verifies_and_does_not_claim_optimality() -> None:
         for part in parts[:-1]:
             position += part
             assert not 48 <= position <= 52
+
+
+def test_ondemand_module_has_no_case_specific_branch() -> None:
+    import re
+
+    source = (
+        Path(__file__).resolve().parents[1] / "app" / "engine_stable_ondemand.py"
+    ).read_text(encoding="utf-8")
+    assert "case_id" not in source
+    assert "record_index" not in source
+    assert not re.search(r"\b[0-9a-f]{8}-[0-9a-f]{4}-", source)
+    for token in ("2649", "2830", "2502", "11000", "1550", "12550"):
+        assert token not in source
+
+
+def test_round4_pilot_sample_stays_inside_the_dev_split() -> None:
+    pilot = json.loads((ROOT / "docs/stable-round4-pilot-split.json").read_text(encoding="utf-8"))
+    split = json.loads((ROOT / "docs/stable-round3-split.json").read_text(encoding="utf-8"))
+    chosen = set(pilot["record_indexes"])
+    assert pilot["seed"] == 20261014
+    assert pilot["parent_split_seed"] == 20261013
+    assert len(chosen) == 20
+    assert chosen.isdisjoint(split["blind_record_indexes"])
+    assert chosen <= set(split["dev_record_indexes"])
+
+
+def test_ondemand_does_not_run_when_an_earlier_stage_succeeds(monkeypatch) -> None:
+    calls: list[int] = []
+
+    def fake(*_args, **_kwargs):
+        calls.append(1)
+        return None
+
+    monkeypatch.setattr("app.engine_stable_ondemand.solve_group_ondemand", fake)
+    result = _verified_stable(_flat_group(), 5)
+    assert calls == []
+    assert result["groups"][0]["metrics"]["stable_strategy"] != "ondemand-pricing"
+    assert result["groups"][0]["metrics"]["ondemand_elapsed_seconds"] == 0.0
+
+
+def test_ondemand_does_not_run_when_cpsat_succeeds(monkeypatch) -> None:
+    from app.domain import parse_problem
+    from app.engine_stable import solve_group_stable
+
+    calls: list[int] = []
+
+    def fake_cpsat(group, deadline):
+        return {"metrics": {}, "warnings": []}
+
+    monkeypatch.setattr("app.engine_stable_cpsat.solve_group_cpsat", fake_cpsat)
+    monkeypatch.setattr(
+        "app.engine_stable._strategies",
+        lambda: [("noop", "native", lambda group, deadline: None)],
+    )
+    monkeypatch.setattr(
+        "app.engine_stable_ondemand.solve_group_ondemand",
+        lambda *_args, **_kwargs: calls.append(1),
+    )
+    group = parse_problem(_flat_group()).groups[0]
+    result = solve_group_stable(group, 2)
+    assert calls == []
+    assert result["metrics"]["stable_strategy"] == "cpsat-feasibility"
+
+
+def test_ondemand_uses_its_own_clock_after_the_catalogue_stage(monkeypatch) -> None:
+    import time
+
+    from app.domain import parse_problem
+    from app.engine_stable import _CPSAT_LIMIT, _ONDEMAND_LIMIT, solve_group_stable
+
+    calls: list[float] = []
+
+    def fake(group, deadline):
+        calls.append(deadline - time.monotonic())
+        return None
+
+    monkeypatch.setattr("app.engine_stable_cpsat.solve_group_cpsat", lambda group, deadline: None)
+    monkeypatch.setattr("app.engine_stable_ondemand.solve_group_ondemand", fake)
+    monkeypatch.setattr(
+        "app.engine_stable._strategies",
+        lambda: [("noop", "native", lambda group, deadline: None)],
+    )
+    group = parse_problem(_flat_group()).groups[0]
+    cpsat = _CPSAT_LIMIT.set(0)
+    ondemand = _ONDEMAND_LIMIT.set(1.25)
+    try:
+        result = solve_group_stable(group, 0.05)
+    finally:
+        _ONDEMAND_LIMIT.reset(ondemand)
+        _CPSAT_LIMIT.reset(cpsat)
+    assert len(calls) == 1
+    assert 1.0 <= calls[0] <= 1.25
+    assert result["failure_class"] == "UNPROVED_NO_SOLUTION"
+    assert result["metrics"]["ondemand_elapsed_seconds"] < 0.5
+
+
+def test_ondemand_past_deadline_raises_immediately() -> None:
+    import time
+
+    from app.domain import parse_problem
+    from app.engine_stable import _Timeout
+    from app.engine_stable_ondemand import solve_group_ondemand
+
+    group = parse_problem(prepare_stable_payload(_flat_group())).groups[0]
+    started = time.monotonic()
+    try:
+        solve_group_ondemand(group, started - 1)
+        raised = False
+    except _Timeout:
+        raised = True
+    assert raised is True
+    assert time.monotonic() - started < 0.5
+
+
+def test_ondemand_finds_a_complement_the_stock_boundary_misses(monkeypatch) -> None:
+    """Stock-boundary welds are illegal; a discrete complement still packs.
+
+    Pipe 100 may weld only at 50 and pipe 80 only at 40. The only stock is 90,
+    so the stock-boundary targets 10 and 90 are inside the forbidden zones.
+    Two bars of 50+40 are feasible. This does not use a free integer weld.
+    """
+
+    import time
+
+    from app.domain import parse_problem
+    from app.engine_stable import prepare_stable_payload
+    from app.engine_stable import _windowed_two_piece
+    from app.engine_stable_ondemand import solve_group_ondemand
+
+    payload = _flat_group()
+    payload["Pipe"] = [
+        {
+            "figure_number": "A",
+            "Parent_node": "A",
+            "jlxh": "1",
+            "cube_no": "1",
+            "pipe_length": 100,
+            "pipe_demand": 1,
+            "Max_Weldingjoint_Number": 1,
+            "Unweldable_Area": [[1, 49], [51, 99]],
+        },
+        {
+            "figure_number": "B",
+            "Parent_node": "B",
+            "jlxh": "1",
+            "cube_no": "1",
+            "pipe_length": 80,
+            "pipe_demand": 1,
+            "Max_Weldingjoint_Number": 1,
+            "Unweldable_Area": [[1, 39], [41, 79]],
+        },
+    ]
+    payload["Stock"] = [{"stock_length": 90, "stock_demand": 2, "must_use": 0}]
+    payload["NestParam"]["BladeMargin"] = 0
+    prepared = prepare_stable_payload(payload)
+    group = parse_problem(prepared).groups[0]
+    assert _windowed_two_piece(group.pipes[0], group, 90, 1) is None
+    assert _windowed_two_piece(group.pipes[0], group, 10, 1) is None
+    found = solve_group_ondemand(group, time.monotonic() + 8)
+    assert found is not None
+    used: set[int] = set()
+    for row in found["welding_patterns"]:
+        position = 0
+        parts = [int(part) for part in row["parts"]]
+        used.update(parts)
+        for part in parts[:-1]:
+            position += part
+            assert group.pipes[0].weld_allowed(position) or group.pipes[1].weld_allowed(position)
+    assert 50 in used and 40 in used
+
+    monkeypatch.setattr(
+        "app.engine_stable._strategies",
+        lambda: [("noop", "native", lambda group, deadline: None)],
+    )
+    result = solve_payload(
+        payload,
+        time_limit_seconds=2,
+        engine="stable",
+        cpsat_time_limit=0,
+        ondemand_time_limit=8,
+    )
+    prepared_result = result.pop("_stable_prepared_payload")
+    report = verify_solution(prepared_result, result)
+    assert report["passed"] is True
+    metrics = result["groups"][0]["metrics"]
+    assert metrics["stable_strategy"] == "ondemand-pricing"
+    assert metrics["lexicographic_optimal"] is False
+    assert metrics["core_lexicographic_optimal"] is False
+    assert result["summary"]["optimality_claimed"] is False
+
+
+def test_ondemand_budget_is_shared_by_every_group_in_one_case(monkeypatch) -> None:
+    import time
+
+    from app.domain import parse_problem
+    from app.engine_stable import (
+        _CPSAT_LIMIT,
+        _ONDEMAND_LEFT,
+        _ONDEMAND_LIMIT,
+        solve_group_stable,
+    )
+
+    calls: list[float] = []
+
+    def fake(group, deadline):
+        calls.append(deadline - time.monotonic())
+        time.sleep(0.25)
+        return None
+
+    monkeypatch.setattr("app.engine_stable_cpsat.solve_group_cpsat", lambda group, deadline: None)
+    monkeypatch.setattr("app.engine_stable_ondemand.solve_group_ondemand", fake)
+    monkeypatch.setattr(
+        "app.engine_stable._strategies",
+        lambda: [("noop", "native", lambda group, deadline: None)],
+    )
+    group = parse_problem(_flat_group()).groups[0]
+    cell = {"remaining": 1.0}
+    cpsat = _CPSAT_LIMIT.set(0)
+    limit = _ONDEMAND_LIMIT.set(1.0)
+    left = _ONDEMAND_LEFT.set(cell)
+    try:
+        first = solve_group_stable(group, 0.05)
+        second = solve_group_stable(group, 0.05)
+    finally:
+        _ONDEMAND_LEFT.reset(left)
+        _ONDEMAND_LIMIT.reset(limit)
+        _CPSAT_LIMIT.reset(cpsat)
+    assert len(calls) == 2
+    assert calls[0] > calls[1]
+    assert calls[1] < 0.9
+    assert cell["remaining"] < 0.6
+    assert first["failure_class"] == "UNPROVED_NO_SOLUTION"
+    assert second["failure_class"] == "UNPROVED_NO_SOLUTION"
+
+
+def test_full_alphabet_replaces_a_rare_length() -> None:
+    from app.engine_stable_ondemand import _MAX_ALPHABET, _TIER, _admit, _alphabet
+
+    token = _TIER.set(0)
+    try:
+        menus = [[(1,), (2,), (3,)]]
+        for length in range(4, _MAX_ALPHABET + 1):
+            menus.append([(length,)])
+        assert len(_alphabet(menus)) == _MAX_ALPHABET
+        introduced: set[int] = set()
+        dropped: set[int] = set()
+        assert _admit(menus, 0, (100,), introduced, dropped) is True
+        assert 100 in _alphabet(menus)
+        assert len(_alphabet(menus)) <= _MAX_ALPHABET
+    finally:
+        _TIER.reset(token)
+
+
+def test_alphabet_cap_doubles_from_the_first_tier() -> None:
+    from app.engine_stable_ondemand import (
+        _MAX_ALPHABET,
+        _TIER,
+        _alphabet_cap,
+        _column_cap,
+        _new_lengths,
+    )
+
+    assert _MAX_ALPHABET == 16
+    first = _TIER.set(0)
+    try:
+        assert _alphabet_cap() == 16
+        assert _new_lengths() == 4
+        assert _column_cap() == 12000
+        second = _TIER.set(1)
+        assert _alphabet_cap() == 32
+        assert _new_lengths() == 8
+        assert _column_cap() == 24000
+        _TIER.reset(second)
+        third = _TIER.set(2)
+        assert _alphabet_cap() == 64
+        _TIER.reset(third)
+    finally:
+        _TIER.reset(first)
+
+
+def test_ondemand_expands_until_the_deadline_or_a_larger_tier(monkeypatch) -> None:
+    """An infeasible restricted master must not stop at the first cap.
+
+    The master is stubbed infeasible so this does not depend on a stock
+    pattern. The search has to record a larger alphabet tier, and it has to
+    return well inside a minute when the deadline is only a couple of seconds.
+    """
+
+    import time
+
+    from app.domain import parse_problem
+    from app.engine_stable import _Timeout, prepare_stable_payload
+    from app.engine_stable_ondemand import ondemand_tier_log, solve_group_ondemand
+
+    payload = _flat_group()
+    payload["Stock"] = [{"stock_length": 100, "stock_demand": 2, "must_use": 0}]
+    payload["Pipe"][0]["Max_Weldingjoint_Number"] = 2
+    payload["Pipe"][0]["pipe_demand"] = 3
+    group = parse_problem(prepare_stable_payload(payload)).groups[0]
+
+    def always_infeasible(*_args, **_kwargs):
+        return "infeasible", None, [], []
+
+    monkeypatch.setattr("app.engine_stable_ondemand._solve_master", always_infeasible)
+    started = time.monotonic()
+    try:
+        solve_group_ondemand(group, started + 2.0)
+    except _Timeout:
+        pass
+    elapsed = time.monotonic() - started
+    assert elapsed < 5
+    text = ondemand_tier_log()
+    assert "16@" in text
+    assert "32@" in text
