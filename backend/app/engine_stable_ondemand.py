@@ -5,9 +5,11 @@ CP-SAT stage both return no plan. It does not read those stages' clocks.
 
 Weld positions are not free integers. Each pipe gets a discrete set: a few
 interior samples, the forbidden-zone endpoints nudged by at most 1 mm, and
-stock-boundary welds. Pricing then adds a few complement lengths that exact-fill
-a stock with a length already in the alphabet. Three-piece patterns are
-generated only after two-piece pricing adds nothing.
+stock-boundary welds. A pipe longer than every stock is first split into
+pieces taken from the stock lengths and those lengths minus a few kerfs,
+on welds the forbidden zones still allow. Pricing then adds a few complement
+lengths that exact-fill a stock with a length already in the alphabet.
+Three-piece patterns are generated only after two-piece pricing adds nothing.
 
 The alphabet, the number of new lengths per round, the patterns per pipe, and
 the cut-column list start small and double when the restricted master is
@@ -34,6 +36,7 @@ from .engine_stable import (
     _acceptable,
     _emit,
     _min_part,
+    _peel_pattern,
     _snap_weld,
     _split_piece,
     _uniform_parts,
@@ -70,6 +73,9 @@ _STOP_REMAINING = 0.4
 _MAX_PIECES_ON_BAR = 4
 _POOL_LIMIT = 512
 _LOG_KEEP = 24
+_NEAR_STOCK_KEEP = 8
+_NEAR_STOCK_BRANCH = 4
+_NEAR_STOCK_NODES = 400
 
 
 def _tier() -> int:
@@ -188,7 +194,17 @@ def _search(group: MaterialGroup, deadline: float) -> dict | None:
         while True:
             _TIER.set(tier)
             _ensure_time(deadline)
-            menus = _limit_alphabet([list(item) for item in pools], stock_lengths)
+            long_pipes = {
+                index
+                for index, pipe in enumerate(group.pipes)
+                if stock_lengths and pipe.length > max(stock_lengths)
+            }
+            menus = _limit_alphabet(
+                [list(item) for item in pools],
+                stock_lengths,
+                long_pipes,
+                set(_near_stock_menu(group)),
+            )
             dropped: set[int] = set()
             window = _WINDOWS[min(tier, len(_WINDOWS) - 1)]
             before = sum(len(menu) for menu in pools)
@@ -413,6 +429,131 @@ def _avail(group: MaterialGroup) -> list[int]:
     return [length for length, _qty in sorted(counts.items())]
 
 
+def _near_stock_menu(group: MaterialGroup) -> list[int]:
+    """Piece lengths that fill a stock, or fill it after a few kerfs.
+
+    The menu is derived from this order's stocks and blade width. It is the
+    same for every pipe in the group.
+    """
+
+    stocks = _avail(group)
+    if not stocks:
+        return []
+    margin = _min_part(group, multi=True)
+    max_stock = max(stocks)
+    kerf = max(0, group.blade_margin)
+    found: set[int] = set()
+    for stock in stocks:
+        steps = 1 if kerf == 0 else 4
+        for count in range(steps):
+            piece = stock - count * kerf
+            if margin <= piece <= max_stock:
+                found.add(piece)
+    return sorted(found, reverse=True)
+
+
+def _piece_waste(length: int, stocks: list[int], kerf: int, mode: str) -> int:
+    best: int | None = None
+    for stock in stocks:
+        if length > stock:
+            continue
+        candidate = _CutCandidate(stock, (length,), kerf, mode)
+        if candidate.remainder < 0:
+            continue
+        if best is None or candidate.remainder < best:
+            best = candidate.remainder
+    return 10**9 if best is None else best
+
+
+def _near_stock_patterns(
+    pipe: PipeDemand, group: MaterialGroup
+) -> list[tuple[int, ...]]:
+    """Split a pipe that is longer than every stock into near-stock pieces.
+
+    Each internal weld sits on a stock length or a stock length minus a few
+    kerfs, and only where welding is allowed. A forbidden zone drops that
+    candidate; the leftover piece may be shorter than the menu. Existing
+    stock peels are kept as extra seeds when the menu itself has no legal
+    weld. Pipes that fit on one stock are left untouched.
+    """
+
+    stocks = _avail(group)
+    if not stocks or pipe.length <= max(stocks):
+        return []
+    max_stock = max(stocks)
+    margin = _min_part(group, multi=True)
+    need = (pipe.length + max_stock - 1) // max_stock
+    if need < 2 or need - 1 > pipe.max_joints:
+        return []
+    upper = min(pipe.max_joints + 1, need + 2, 6)
+    menu = _near_stock_menu(group)
+    menu_set = set(menu)
+    kerf = group.blade_margin
+    mode = group.kerf_mode
+    found: list[tuple[int, ...]] = []
+    seen: set[tuple[int, ...]] = set()
+    nodes = 0
+
+    def emit(parts: tuple[int, ...] | None) -> None:
+        if parts is None or parts in seen or len(found) >= 24:
+            return
+        if _acceptable(pipe, group, parts):
+            seen.add(parts)
+            found.append(parts)
+
+    def search(cursor: int, left: int, parts: list[int]) -> None:
+        nonlocal nodes
+        if nodes >= _NEAR_STOCK_NODES or len(found) >= 24:
+            return
+        nodes += 1
+        remain = pipe.length - cursor
+        if left == 1:
+            if margin <= remain <= max_stock:
+                emit(tuple([*parts, remain]))
+            return
+        min_rest = margin * (left - 1)
+        max_rest = max_stock * (left - 1)
+        options: list[tuple[int, int, int]] = []
+        for length in menu:
+            if length < margin or length > max_stock:
+                continue
+            rest = remain - length
+            if rest < min_rest or rest > max_rest:
+                continue
+            if not pipe.weld_allowed(cursor + length):
+                continue
+            # A piece between two welds must clear the minimum weld distance.
+            if parts and left > 1 and length < group.min_weld_distance:
+                continue
+            options.append((_piece_waste(length, stocks, kerf, mode), -length, length))
+        options.sort()
+        picked: list[int] = []
+        for _waste, _neg, length in options:
+            if length in picked:
+                continue
+            picked.append(length)
+            if len(picked) >= _NEAR_STOCK_BRANCH:
+                break
+        for length in picked:
+            parts.append(length)
+            search(cursor + length, left - 1, parts)
+            parts.pop()
+
+    for pieces in range(need, upper + 1):
+        search(0, pieces, [])
+    for longest in (True, False):
+        for early in (True, False):
+            emit(_peel_pattern(pipe, group, longest_first=longest, finish_early=early))
+
+    def rank(parts: tuple[int, ...]) -> tuple:
+        off_menu = sum(1 for part in parts if part not in menu_set)
+        total = sum(_piece_waste(part, stocks, kerf, mode) for part in parts)
+        return (off_menu, len(parts), total, parts)
+
+    found.sort(key=rank)
+    return found[:_NEAR_STOCK_KEEP]
+
+
 def _seed_menus(group: MaterialGroup, *, fine: bool) -> list[list[tuple[int, ...]]]:
     steps = _FINE_STEPS if fine else _COARSE_STEPS
     stocks = _avail(group)
@@ -430,6 +571,9 @@ def _seed_menus(group: MaterialGroup, *, fine: bool) -> list[list[tuple[int, ...
 
         max_stock = max(stocks) if stocks else 0
         whole = (pipe.length,) if pipe.length <= max_stock else None
+        if max_stock and pipe.length > max_stock:
+            for parts in _near_stock_patterns(pipe, group):
+                add(parts)
         add(whole)
         for weld in _grid_welds(pipe, group, stocks, steps):
             add(_two_from_weld(pipe, group, weld))
@@ -527,32 +671,42 @@ def _anchor_stocks(stocks: list[int], pipe_length: int) -> list[int]:
 def _limit_alphabet(
     menus: list[list[tuple[int, ...]]],
     stock_lengths: set[int],
+    long_pipes: set[int] | None = None,
+    menu_lengths: set[int] | None = None,
 ) -> list[list[tuple[int, ...]]]:
     """Keep at most the current tier's alphabet of distinct piece lengths.
 
     A pipe with no pattern is served before a pipe that already has one, and
     a pattern that reuses lengths already chosen is preferred. Otherwise the
     first pipes fill the alphabet and later pipes never reach the master.
+    Pipes longer than every stock prefer pieces that sit on the near-stock
+    menu; shorter pipes keep the previous ranking.
     """
 
+    long = long_pipes or set()
+    menu = menu_lengths or stock_lengths
     chosen: list[list[tuple[int, ...]]] = [[] for _ in menus]
     used: set[int] = set()
     while True:
         best: tuple | None = None
-        for pipe_index, menu in enumerate(menus):
+        for pipe_index, menu_row in enumerate(menus):
             if len(chosen[pipe_index]) >= _pattern_cap():
                 continue
-            for parts in menu:
+            for parts in menu_row:
                 if parts in chosen[pipe_index]:
                     continue
                 extra = {part for part in parts if part not in used}
                 if len(used) + len(extra) > _alphabet_cap():
                     continue
                 aligned = sum(1 for part in parts if part in stock_lengths)
+                if pipe_index in long and len(parts) >= 2:
+                    align_key = -sum(1 for part in parts if part in menu)
+                else:
+                    align_key = aligned
                 cand = (
                     0 if not chosen[pipe_index] else 1,
                     len(extra),
-                    aligned,
+                    align_key,
                     len(parts),
                     pipe_index,
                     parts,
@@ -851,6 +1005,8 @@ def _cover_empty_pipes(
         existing = set(menus[pipe_index])
         candidates: list[tuple[int, ...]] = []
         if max_stock and pipe.length > max_stock and pipe.max_joints >= 1:
+            for parts in _near_stock_patterns(pipe, group):
+                candidates.append(parts)
             need = (pipe.length + max_stock - 1) // max_stock
             upper = min(pipe.max_joints + 1, need + 1 + _tier(), 8)
             for pieces in range(max(need, 2), upper + 1):

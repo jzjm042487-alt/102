@@ -428,6 +428,38 @@ def test_round4_pilot_sample_stays_inside_the_dev_split() -> None:
     assert chosen <= set(split["dev_record_indexes"])
 
 
+def test_round5_pilot_is_unsolved_dev_overlength_only() -> None:
+    import csv
+
+    pilot = json.loads((ROOT / "docs/stable-round5-pilot-split.json").read_text(encoding="utf-8"))
+    split = json.loads((ROOT / "docs/stable-round3-split.json").read_text(encoding="utf-8"))
+    chosen = [int(index) for index in pilot["record_indexes"]]
+    assert len(chosen) == 21
+    assert len(chosen) == len(set(chosen))
+    assert set(chosen).isdisjoint(split["blind_record_indexes"])
+    assert set(chosen) <= set(split["dev_record_indexes"])
+    features = {
+        int(row["record_index"]): row
+        for row in csv.DictReader(
+            (ROOT / "docs/stable-round4-extended-features.csv").open(encoding="utf-8")
+        )
+    }
+    extended = {
+        int(row["record_index"]): row
+        for row in csv.DictReader(
+            (ROOT / "docs/stable-round4-extended.csv").open(encoding="utf-8")
+        )
+    }
+    expected = sorted(
+        index
+        for index, row in extended.items()
+        if row["是否可行"] != "是"
+        and row["集合"] == "开发未解"
+        and float(features[index]["超定尺长度比例"]) == 1.0
+    )
+    assert chosen == expected
+
+
 def test_ondemand_does_not_run_when_an_earlier_stage_succeeds(monkeypatch) -> None:
     calls: list[int] = []
 
@@ -716,3 +748,120 @@ def test_ondemand_expands_until_the_deadline_or_a_larger_tier(monkeypatch) -> No
     text = ondemand_tier_log()
     assert "16@" in text
     assert "32@" in text
+
+
+def test_near_stock_patterns_follow_stock_and_forbidden_zones() -> None:
+    """A pipe longer than every stock is split onto stock-sized pieces.
+
+    The split is not a free integer weld. A forbidden band around a stock
+    multiple drops that weld and keeps a legal one. A pipe that already fits
+    on one stock is not given this family.
+    """
+
+    from app.domain import parse_problem
+    from app.engine_stable_ondemand import _near_stock_patterns
+
+    def group_for(pipes: list[dict], stocks: list[dict], kerf: int = 0):
+        payload = _flat_group()
+        payload["Pipe"] = pipes
+        payload["Stock"] = stocks
+        payload["NestParam"]["BladeMargin"] = kerf
+        return parse_problem(prepare_stable_payload(payload)).groups[0]
+
+    clean = group_for(
+        [
+            {
+                "figure_number": "L",
+                "Parent_node": "L",
+                "jlxh": "1",
+                "cube_no": "1",
+                "pipe_length": 25000,
+                "pipe_demand": 1,
+                "Max_Weldingjoint_Number": 4,
+            }
+        ],
+        [{"stock_length": 12000, "stock_demand": 3, "must_use": 0}],
+    )
+    patterns = _near_stock_patterns(clean.pipes[0], clean)
+    assert patterns
+    assert any(12000 in parts for parts in patterns)
+    for parts in patterns:
+        assert sum(parts) == 25000
+        assert max(parts) <= 12000
+        position = 0
+        for part in parts[:-1]:
+            position += part
+            assert clean.pipes[0].weld_allowed(position)
+
+    blocked = group_for(
+        [
+            {
+                "figure_number": "L",
+                "Parent_node": "L",
+                "jlxh": "1",
+                "cube_no": "1",
+                "pipe_length": 25000,
+                "pipe_demand": 1,
+                "Max_Weldingjoint_Number": 4,
+                "Unweldable_Area": [[11900, 12100], [23900, 24100]],
+            }
+        ],
+        [{"stock_length": 12000, "stock_demand": 3, "must_use": 0}],
+    )
+    blocked_patterns = _near_stock_patterns(blocked.pipes[0], blocked)
+    assert blocked_patterns
+    for parts in blocked_patterns:
+        position = 0
+        for part in parts[:-1]:
+            position += part
+            assert position not in range(11900, 12101)
+            assert position not in range(23900, 24101)
+            assert blocked.pipes[0].weld_allowed(position)
+
+    short = group_for(
+        [
+            {
+                "figure_number": "S",
+                "Parent_node": "S",
+                "jlxh": "1",
+                "cube_no": "1",
+                "pipe_length": 8000,
+                "pipe_demand": 1,
+                "Max_Weldingjoint_Number": 4,
+            }
+        ],
+        [{"stock_length": 12000, "stock_demand": 1, "must_use": 0}],
+    )
+    assert _near_stock_patterns(short.pipes[0], short) == []
+
+
+def test_ondemand_solves_a_long_pipe_from_near_stock_pieces(monkeypatch) -> None:
+    payload = _flat_group()
+    payload["Pipe"] = [
+        {
+            "figure_number": "L",
+            "Parent_node": "L",
+            "jlxh": "1",
+            "cube_no": "1",
+            "pipe_length": 25000,
+            "pipe_demand": 1,
+            "Max_Weldingjoint_Number": 4,
+        }
+    ]
+    payload["Stock"] = [{"stock_length": 12000, "stock_demand": 3, "must_use": 0}]
+    payload["NestParam"]["BladeMargin"] = 0
+    monkeypatch.setattr(
+        "app.engine_stable._strategies",
+        lambda: [("noop", "native", lambda group, deadline: None)],
+    )
+    result = solve_payload(
+        payload,
+        time_limit_seconds=2,
+        engine="stable",
+        cpsat_time_limit=0,
+        ondemand_time_limit=8,
+    )
+    prepared = result.pop("_stable_prepared_payload")
+    report = verify_solution(prepared, result)
+    assert report["passed"] is True
+    assert result["groups"][0]["metrics"]["stable_strategy"] == "ondemand-pricing"

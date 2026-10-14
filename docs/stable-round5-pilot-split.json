@@ -1,0 +1,31 @@
+{
+  "seed_note": "不是重新抽样。名单是第四轮 300 秒重跑之后，开发集里仍未解、且需求长度全部超过本组最长定尺的题。",
+  "parent_split_seed": 20261013,
+  "parent_split_file": "docs/stable-round3-split.json",
+  "rule": "docs/stable-round4-extended.csv 中是否可行不为「是」、集合为「开发未解」，并且 docs/stable-round4-extended-features.csv 中超定尺长度比例等于 1",
+  "holdout_rule": "盲测集不进入这份试算名单，试算阶段不得运行盲测题",
+  "count": 21,
+  "record_indexes": [
+    653,
+    1083,
+    1518,
+    1863,
+    2019,
+    2110,
+    2275,
+    2276,
+    2290,
+    2356,
+    2691,
+    2698,
+    2746,
+    2796,
+    2803,
+    2811,
+    2827,
+    2916,
+    2945,
+    3039,
+    3165
+  ]
+}
