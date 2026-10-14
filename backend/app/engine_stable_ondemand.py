@@ -5,11 +5,15 @@ CP-SAT stage both return no plan. It does not read those stages' clocks.
 
 Weld positions are not free integers. Each pipe gets a discrete set: a few
 interior samples, the forbidden-zone endpoints nudged by at most 1 mm, and
-stock-boundary welds. A pipe longer than every stock is first split into
-pieces taken from the stock lengths and those lengths minus a few kerfs,
-on welds the forbidden zones still allow. Pricing then adds a few complement
-lengths that exact-fill a stock with a length already in the alphabet.
-Three-piece patterns are generated only after two-piece pricing adds nothing.
+stock-boundary welds. Pricing then adds a few complement lengths that
+exact-fill a stock with a length already in the alphabet. Three-piece
+patterns are generated only after two-piece pricing adds nothing.
+
+When that ordinary restricted master is infeasible and a pipe is longer than
+every stock, a second master sees splits of that pipe into pieces taken from
+the stock lengths and those lengths minus a few kerfs, on welds the forbidden
+zones still allow. Those columns are not written back, so later ordinary
+tiers keep the pattern family that already solved earlier cases.
 
 The alphabet, the number of new lengths per round, the patterns per pipe, and
 the cut-column list start small and double when the restricted master is
@@ -194,17 +198,7 @@ def _search(group: MaterialGroup, deadline: float) -> dict | None:
         while True:
             _TIER.set(tier)
             _ensure_time(deadline)
-            long_pipes = {
-                index
-                for index, pipe in enumerate(group.pipes)
-                if stock_lengths and pipe.length > max(stock_lengths)
-            }
-            menus = _limit_alphabet(
-                [list(item) for item in pools],
-                stock_lengths,
-                long_pipes,
-                set(_near_stock_menu(group)),
-            )
+            menus = _limit_alphabet([list(item) for item in pools], stock_lengths)
             dropped: set[int] = set()
             window = _WINDOWS[min(tier, len(_WINDOWS) - 1)]
             before = sum(len(menu) for menu in pools)
@@ -281,6 +275,55 @@ def _search(group: MaterialGroup, deadline: float) -> dict | None:
         raise
 
 
+def _augmented_near_stock_plan(
+    group: MaterialGroup,
+    pools: list[list[tuple[int, ...]]],
+    deadline: float,
+    cp_model,
+    stock_lengths: set[int],
+) -> dict | None:
+    """Re-select patterns after the ordinary master is infeasible.
+
+    Long pipes prefer pieces on the stock menu, and the near-stock splits are
+    visible to that selection. Nothing is written back to ``pools``, so the
+    ordinary tiers keep the pattern family that already solved earlier cases.
+    """
+
+    if not stock_lengths or deadline - time.monotonic() < 0.8:
+        return None
+    max_stock = max(stock_lengths)
+    long = {
+        index
+        for index, pipe in enumerate(group.pipes)
+        if pipe.length > max_stock and pipe.max_joints >= 1
+    }
+    if not long:
+        return None
+    copied = [list(menu) for menu in pools]
+    for index in long:
+        have = set(copied[index])
+        for parts in _near_stock_patterns(group.pipes[index], group):
+            if parts not in have:
+                copied[index].append(parts)
+                have.add(parts)
+    limited = _limit_alphabet(
+        copied,
+        stock_lengths,
+        long,
+        set(_near_stock_menu(group)),
+    )
+    if any(not menu for menu in limited):
+        return None
+    slice_cap = 14.0 if _alphabet_cap() >= 64 else 4.0
+    try:
+        _status, plan, _missing, _weak = _solve_master(
+            group, limited, deadline, cp_model, slice_cap=slice_cap
+        )
+    except _Timeout:
+        return None
+    return plan
+
+
 def _expand_once(
     group: MaterialGroup,
     menus: list[list[tuple[int, ...]]],
@@ -306,6 +349,11 @@ def _expand_once(
         )
         if plan is not None or status in ("broken", "unknown"):
             return status, plan, missing
+        extra = _augmented_near_stock_plan(
+            group, pools, deadline, cp_model, stock_lengths
+        )
+        if extra is not None:
+            return "feasible", extra, []
     if missing:
         _drop_unsourcable(menus, set(missing))
         dropped.update(missing)
@@ -571,9 +619,6 @@ def _seed_menus(group: MaterialGroup, *, fine: bool) -> list[list[tuple[int, ...
 
         max_stock = max(stocks) if stocks else 0
         whole = (pipe.length,) if pipe.length <= max_stock else None
-        if max_stock and pipe.length > max_stock:
-            for parts in _near_stock_patterns(pipe, group):
-                add(parts)
         add(whole)
         for weld in _grid_welds(pipe, group, stocks, steps):
             add(_two_from_weld(pipe, group, weld))
@@ -1005,8 +1050,6 @@ def _cover_empty_pipes(
         existing = set(menus[pipe_index])
         candidates: list[tuple[int, ...]] = []
         if max_stock and pipe.length > max_stock and pipe.max_joints >= 1:
-            for parts in _near_stock_patterns(pipe, group):
-                candidates.append(parts)
             need = (pipe.length + max_stock - 1) // max_stock
             upper = min(pipe.max_joints + 1, need + 1 + _tier(), 8)
             for pieces in range(max(need, 2), upper + 1):
