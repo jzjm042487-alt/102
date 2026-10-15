@@ -132,6 +132,104 @@ def test_post_pass_is_not_on_the_feasibility_path() -> None:
     assert "case_id" not in opt
 
 
+def test_complement_split_cuts_the_bar_count() -> None:
+    """Three pipes of length 60 on bars of 100 cannot pair as wholes.
+
+    A two-piece complement uses two bars instead of three. This is the
+    general offcut pattern, not a case-specific rule.
+    """
+
+    from app.domain import parse_problem
+    from app.engine_stable_opt import optimize_group
+    from app.solver import _CutCandidate, _WeldCandidate, _assemble_group_result
+
+    payload = {
+        "input": {
+            "Min_Welding_Length": "0",
+            "NestParam": {"BladeMargin": "0"},
+            "data": [
+                {
+                    "material": "T",
+                    "specifications": "S",
+                    "Pipe": [
+                        {
+                            "figure_number": "P",
+                            "Parent_node": "P",
+                            "jlxh": 1,
+                            "cube_no": 1,
+                            "pipe_length": "60",
+                            "pipe_demand": 3,
+                            "Max_Weldingjoint_Number": 2,
+                        }
+                    ],
+                    "Stock": [{"stock_length": 100, "stock_demand": 10}],
+                }
+            ],
+        }
+    }
+    group = parse_problem(payload).groups[0]
+    solved = _assemble_group_result(
+        group,
+        "stable",
+        "FEASIBLE",
+        [(_WeldCandidate(0, (60,)), 3)],
+        [(_CutCandidate(100, (60,), 0, "BETWEEN_PARTS"), 3)],
+        0.01,
+    )
+    solved["metrics"]["solve_status"] = "FEASIBLE"
+    solved["metrics"]["stable_strategy"] = "whole-first"
+    kept, log = optimize_group(group, solved, (6.0, 1.0, 1.0))
+    assert log["kept"] == "optimized"
+    assert int(kept["metrics"]["used_stock_length"]) <= 200
+    assert int(kept["metrics"]["used_stock_length"]) < int(solved["metrics"]["used_stock_length"])
+    assert kept["metrics"]["lexicographic_optimal"] is False
+    assert log["cut_columns"] <= 2400
+
+
+def test_cut_cap_keeps_the_incumbent_and_a_full_pattern() -> None:
+    from app.domain import parse_problem
+    from app.engine_stable_opt import MAX_CUT_COLUMNS, _limit_cuts
+    from app.lexcg import _CutCol
+
+    payload = {
+        "input": {
+            "NestParam": {"BladeMargin": "0"},
+            "data": [
+                {
+                    "material": "T",
+                    "specifications": "S",
+                    "Pipe": [
+                        {
+                            "figure_number": "P",
+                            "Parent_node": "P",
+                            "jlxh": 1,
+                            "cube_no": 1,
+                            "pipe_length": "60",
+                            "pipe_demand": 1,
+                            "Max_Weldingjoint_Number": 1,
+                        }
+                    ],
+                    "Stock": [{"stock_length": 100, "stock_demand": 5}],
+                }
+            ],
+        }
+    }
+    group = parse_problem(payload).groups[0]
+    columns = [
+        _CutCol(100, (60,), {"stable-incumbent"}),
+        _CutCol(100, (50, 50), {"native-seed"}),
+    ]
+    for stock in range(50, 90):
+        for length in range(1, 40):
+            columns.append(_CutCol(stock, (length,), {"native-seed"}))
+    kept, capped = _limit_cuts(group, columns, 10)
+    assert capped is True
+    assert len(kept) <= 10
+    assert any("stable-incumbent" in column.sources and column.parts == (60,) for column in kept)
+    assert any(column.parts == (50, 50) for column in kept)
+    assert MAX_CUT_COLUMNS >= 10
+
+
 def test_pilot_split_is_the_frozen_non_blind_losses() -> None:
     import csv
 
@@ -166,4 +264,52 @@ def test_pilot_split_is_the_frozen_non_blind_losses() -> None:
         )
     eligible.sort(reverse=True)
     expected = [item[-1] for item in eligible[:50]]
+    assert chosen == expected
+
+
+def test_round2_random_split_is_frozen_before_the_rerun() -> None:
+    import csv
+    import random
+
+    payload = json.loads((ROOT / "docs/opt-round2-random-split.json").read_text(encoding="utf-8"))
+    pilot = {
+        int(index)
+        for index in json.loads((ROOT / "docs/opt-pilot-split.json").read_text(encoding="utf-8"))[
+            "record_indexes"
+        ]
+    }
+    blind = {
+        int(index)
+        for index in json.loads((ROOT / "docs/stable-round3-split.json").read_text(encoding="utf-8"))[
+            "blind_record_indexes"
+        ]
+    }
+    chosen = [int(index) for index in payload["record_indexes"]]
+    assert payload["seed"] == 20261015
+    assert payload["require_legacy_loss"] is False
+    assert payload["count"] == 50
+    assert chosen == sorted(chosen)
+    assert len(set(chosen)) == 50
+    assert not (set(chosen) & pilot)
+    assert not (set(chosen) & blind)
+    full = {
+        int(row["record_index"]): row
+        for row in csv.DictReader((ROOT / "docs/stable-round5-full.csv").open(encoding="utf-8"))
+    }
+    legacy = {
+        int(row["record_index"]): row
+        for row in csv.DictReader((ROOT / "docs/stable-round5-vs-legacy.csv").open(encoding="utf-8"))
+    }
+    eligible = []
+    for index, row in full.items():
+        if row.get("是否可行") != "是" or row.get("校验通过") != "是":
+            continue
+        if index in blind or index in pilot or row.get("集合") == "盲测":
+            continue
+        compared = legacy.get(index)
+        if compared is None or compared.get("老软件合规") != "是":
+            continue
+        eligible.append(index)
+    eligible.sort()
+    expected = sorted(random.Random(20261015).sample(eligible, 50))
     assert chosen == expected

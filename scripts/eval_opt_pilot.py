@@ -1,8 +1,8 @@
-"""Pilot the lexicographic post-pass on the frozen 50-case list.
+"""Run the lexicographic post-pass on one frozen 50-case split.
 
-Stable limits stay 15s + 15s + 60s. The post-pass then gets 20s per layer.
-This script refuses blind indexes and does not accept a case list other than
-docs/opt-pilot-split.json. It does not retune budgets.
+Stable limits stay 15s + 15s + 60s. Layer budgets come from
+``engine_stable_opt.LAYER_SECONDS``. The script refuses blind indexes.
+``--split`` selects a frozen json file; it does not accept a free index list.
 """
 
 from __future__ import annotations
@@ -19,16 +19,19 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "backend"))
+from app.engine_stable_opt import LAYER_SECONDS  # noqa: E402
 RECORDS_PATH = ROOT / "backend/data/samples/software-io/batch-DGMOM/software_records.json"
 SPLIT_PATH = ROOT / "docs/opt-pilot-split.json"
 BLIND_PATH = ROOT / "docs/stable-round3-split.json"
 FULL_CSV = ROOT / "docs/stable-round5-full.csv"
 LEGACY_CSV = ROOT / "docs/stable-round5-vs-legacy.csv"
 OUT = ROOT / "docs/opt-pilot.csv"
+ACTIVE_SPLIT = SPLIT_PATH
+ACTIVE_OUT = OUT
 CHAIN = 15.0
 CPSAT = 15.0
 ONDEMAND = 60.0
-LAYER = (20.0, 20.0, 20.0)
+LAYER = LAYER_SECONDS
 ALARM = CHAIN + CPSAT + ONDEMAND + sum(LAYER) + 20.0
 WORKERS = 3
 COLUMNS = [
@@ -104,13 +107,14 @@ def _blind() -> set[int]:
 
 
 def pilot_indexes() -> list[int]:
-    payload = json.loads(SPLIT_PATH.read_text(encoding="utf-8"))
+    payload = json.loads(ACTIVE_SPLIT.read_text(encoding="utf-8"))
     chosen = [int(index) for index in payload["record_indexes"]]
-    if len(chosen) != 50 or len(chosen) != len(set(chosen)) or int(payload["count"]) != 50:
-        raise SystemExit("pilot split is not the frozen 50 indexes")
+    expected = int(payload["count"])
+    if len(chosen) != expected or len(chosen) != len(set(chosen)) or expected != 50:
+        raise SystemExit(f"{ACTIVE_SPLIT.name} is not a frozen 50-index split")
     overlap = set(chosen) & _blind()
     if overlap:
-        raise SystemExit(f"pilot split overlaps the blind set: {sorted(overlap)}")
+        raise SystemExit(f"split overlaps the blind set: {sorted(overlap)}")
     return chosen
 
 
@@ -294,6 +298,8 @@ def solve_case(task: dict[str, str]) -> dict[str, str]:
 
 
 def _tasks() -> list[dict[str, str]]:
+    payload = json.loads(ACTIVE_SPLIT.read_text(encoding="utf-8"))
+    require_loss = bool(payload.get("require_legacy_loss", True))
     indexes = pilot_indexes()
     full = {int(row["record_index"]): row for row in _rows(FULL_CSV)}
     legacy = {int(row["record_index"]): row for row in _rows(LEGACY_CSV)}
@@ -305,7 +311,9 @@ def _tasks() -> list[dict[str, str]]:
             raise SystemExit(f"record {index} is missing from the round-5 tables")
         if official.get("是否可行") != "是" or official.get("校验通过") != "是":
             raise SystemExit(f"record {index} is not a verified round-5 plan")
-        if compared.get("老软件合规") != "是" or compared.get("词典序对照") != "负":
+        if compared.get("老软件合规") != "是":
+            raise SystemExit(f"record {index} legacy plan is not geometrically compliant")
+        if require_loss and compared.get("词典序对照") != "负":
             raise SystemExit(f"record {index} is not a compliant legacy loss")
         tasks.append(
             {
@@ -370,27 +378,33 @@ def _summarize(path: Path) -> None:
 
 
 def main() -> int:
+    global ACTIVE_SPLIT, ACTIVE_OUT
     parser = argparse.ArgumentParser()
     parser.add_argument("--workers", type=int, default=WORKERS)
+    parser.add_argument("--split", type=Path, default=SPLIT_PATH)
+    parser.add_argument("--out", type=Path, default=OUT)
     args = parser.parse_args()
+    ACTIVE_SPLIT = args.split if args.split.is_absolute() else ROOT / args.split
+    ACTIVE_OUT = args.out if args.out.is_absolute() else ROOT / args.out
     tasks = _tasks()
-    done = _done(OUT)
+    done = _done(ACTIVE_OUT)
     queue = [task for task in tasks if task["case_id"] not in done]
     print(
-        f"pilot {len(tasks)} done {len(done)} pending {len(queue)} "
-        f"workers {args.workers} alarm {ALARM:.0f}s",
+        f"pilot {ACTIVE_SPLIT.name} -> {ACTIVE_OUT.name} "
+        f"{len(tasks)} done {len(done)} pending {len(queue)} "
+        f"workers {args.workers} alarm {ALARM:.0f}s layers {LAYER}",
         flush=True,
     )
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    new_file = not OUT.exists()
-    handle = OUT.open("a", encoding="utf-8", newline="")
+    ACTIVE_OUT.parent.mkdir(parents=True, exist_ok=True)
+    new_file = not ACTIVE_OUT.exists()
+    handle = ACTIVE_OUT.open("a", encoding="utf-8", newline="")
     writer = csv.DictWriter(handle, fieldnames=COLUMNS)
     if new_file:
         writer.writeheader()
         handle.flush()
     if not queue:
         handle.close()
-        _summarize(OUT)
+        _summarize(ACTIVE_OUT)
         return 0
     context = multiprocessing.get_context("spawn")
     wrote = 0
@@ -424,7 +438,7 @@ def main() -> int:
                 flush=True,
             )
     handle.close()
-    _summarize(OUT)
+    _summarize(ACTIVE_OUT)
     return 0
 
 

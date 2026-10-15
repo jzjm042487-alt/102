@@ -7,7 +7,11 @@ Utilization is not constrained.
 
 Layers, each with its own budget:
 
-1. minimize used length, with the stable columns plus a bounded lexcg pricing pass
+1. minimize used length. The column pool keeps the stable plan, then adds
+   complement splits and dense repeats, then a few dual-priced columns.
+   The pool is capped so the master is searched instead of spent on model
+   building. Pricing is a weld segmentation over those lengths plus several
+   cut patterns per stock.
 2. minimize joints without increasing that used length
 3. minimize weld types, then cut types, without worsening the first two locks
 """
@@ -21,19 +25,19 @@ from typing import Any
 
 from .domain import MaterialGroup, from_units
 from .lexcg import (
-    CUT_NODE_BUDGET,
-    SEED_NODE_BUDGET,
+    RC_EPS,
+    SEARCH_JOINT_CAP,
     _Budget,
     _CutCol,
     _WeldCol,
+    _cut_reduced_cost,
     _fits,
+    _legal_parts,
     _lp_duals,
     _merge_cuts,
     _merge_welds,
-    _price_cuts,
-    _price_welds,
-    _seed_cut_patterns,
     _seed_weld_patterns,
+    _weld_reduced_cost,
     knapsack_best_pattern,
 )
 from .solver import (
@@ -42,9 +46,18 @@ from .solver import (
     _assemble_group_result,
 )
 
-LAYER_SECONDS = (20.0, 20.0, 20.0)
-PRICING_CAP_SECONDS = 12.0
+LAYER_SECONDS = (40.0, 20.0, 20.0)
+PRICING_CAP_SECONDS = 18.0
 RANDOM_SEED = 1
+# Tractability bounds for the restricted master. The round-1 pilot showed that
+# unrestricted cut seeding (about 20k columns and above) spent the layer on
+# model building. These limits are fixed for every case.
+MAX_WELD_COLUMNS = 1600
+MAX_CUT_COLUMNS = 2400
+PRICING_ROUNDS = 5
+PATTERNS_PER_STOCK = 4
+WELD_SEARCH_PARTS = 6
+CANDIDATE_LENGTH_CAP = 80
 OBJECTIVES = (
     "used_stock_length",
     "welding_joint_quantity",
@@ -96,77 +109,400 @@ def _stable_columns(
     return welds, cuts, weld_qty, cut_qty
 
 
+def _pipe_lengths(group: MaterialGroup) -> list[int]:
+    lengths: list[int] = []
+    seen: set[int] = set()
+    for pipe in group.pipes:
+        if pipe.length not in seen:
+            seen.add(pipe.length)
+            lengths.append(pipe.length)
+    return lengths
+
+
+def _demand_by_length(group: MaterialGroup) -> dict[int, int]:
+    demand: dict[int, int] = defaultdict(int)
+    for pipe in group.pipes:
+        demand[pipe.length] += pipe.demand
+    return demand
+
+
+def _candidate_lengths(group: MaterialGroup, welds: list[_WeldCol]) -> list[int]:
+    """Lengths that can share a bar: demanded pipes, stable parts, stock residuals."""
+
+    max_stock = max(stock.length for stock in group.stocks)
+    kerf = group.blade_margin
+    demand = _demand_by_length(group)
+    score: dict[int, int] = defaultdict(int)
+    for column in welds:
+        for part in column.parts:
+            score[part] += demand.get(group.pipes[column.pipe_index].length, 1)
+    for length, pieces in demand.items():
+        if 0 < length <= max_stock:
+            score[length] += pieces
+        for stock in group.stocks:
+            width = stock.length
+            if length <= width:
+                residual = width - kerf - length
+                if residual > 0:
+                    score[residual] += pieces
+                    other = length - residual
+                    if 0 < other <= max_stock:
+                        score[other] += pieces
+            elif 0 < width < length:
+                score[width] += pieces
+                remainder = length - (length // width) * width
+                if remainder > 0:
+                    score[remainder] += pieces
+    ranked = sorted(score, key=lambda length: (-score[length], length))
+    return ranked[:CANDIDATE_LENGTH_CAP]
+
+
+def _pattern_is_legal(group: MaterialGroup, pipe: Any, parts: tuple[int, ...]) -> bool:
+    max_stock = max(stock.length for stock in group.stocks)
+    return _legal_parts(
+        pipe,
+        parts,
+        max_stock=max_stock,
+        min_weld=group.min_weld_distance,
+        min_cut=group.min_cut_length,
+        joint_cap=min(pipe.max_joints, SEARCH_JOINT_CAP),
+    )
+
+
+def _complement_welds(group: MaterialGroup, pipe: Any, candidates: list[int]) -> list[tuple[int, ...]]:
+    """Two-piece splits that fill the offcut of a whole pipe, plus a long-pipe chunk."""
+
+    max_stock = max(stock.length for stock in group.stocks)
+    found: list[tuple[int, ...]] = []
+    seen: set[tuple[int, ...]] = set()
+
+    def add(parts: tuple[int, ...]) -> None:
+        if parts in seen or not parts:
+            return
+        if _pattern_is_legal(group, pipe, parts):
+            seen.add(parts)
+            found.append(parts)
+
+    if pipe.length <= max_stock:
+        add((pipe.length,))
+    for part in candidates:
+        other = pipe.length - part
+        if other <= 0 or other > max_stock or part > max_stock:
+            continue
+        add((part, other))
+        add((other, part))
+    if pipe.length > max_stock:
+        for stock in group.stocks:
+            width = stock.length
+            if width <= 0 or width >= pipe.length:
+                continue
+            parts: list[int] = []
+            remaining = pipe.length
+            while remaining > width and len(parts) + 1 < WELD_SEARCH_PARTS:
+                parts.append(width)
+                remaining -= width
+            if 0 < remaining <= max_stock:
+                parts.append(remaining)
+                add(tuple(parts))
+    return found
+
+
+def _best_weld_pattern(
+    group: MaterialGroup,
+    pipe: Any,
+    candidates: list[int],
+    duals: dict[str, Any],
+) -> tuple[int, ...] | None:
+    """Minimum reduced-cost segmentation. Only pipes longer than stock need this search."""
+
+    length = pipe.length
+    if length <= 0 or length > 100_000:
+        return None
+    pi: dict[int, float] = duals["pi"]
+    unknown = max([0.0, *[float(value) for value in pi.values()]], default=0.0)
+    max_stock = max(stock.length for stock in group.stocks)
+    parts = [part for part in candidates if 0 < part <= max_stock]
+    if not parts:
+        return None
+    max_parts = max(1, min(pipe.max_joints, SEARCH_JOINT_CAP, WELD_SEARCH_PARTS - 1) + 1)
+    infinity = 1e100
+    cost = [infinity] * (length + 1)
+    previous: list[tuple[int, int] | None] = [None] * (length + 1)
+    count = [0] * (length + 1)
+    cost[0] = 0.0
+    nodes = 0
+    for position in range(length + 1):
+        if cost[position] >= infinity / 2 or count[position] >= max_parts:
+            continue
+        for part in parts:
+            nodes += 1
+            if nodes > 80_000:
+                break
+            nxt = position + part
+            if nxt > length:
+                continue
+            if nxt < length and not pipe.weld_allowed(nxt):
+                continue
+            new_count = count[position] + 1
+            if new_count > max_parts:
+                continue
+            score = cost[position] + float(pi.get(part, unknown))
+            if score < cost[nxt]:
+                cost[nxt] = score
+                previous[nxt] = (position, part)
+                count[nxt] = new_count
+        if nodes > 80_000:
+            break
+    if cost[length] >= infinity / 2:
+        return None
+    built: list[int] = []
+    cursor = length
+    guard = 0
+    while cursor > 0 and previous[cursor] is not None and guard <= max_parts:
+        _pos, part = previous[cursor]
+        built.append(part)
+        cursor = _pos
+        guard += 1
+    if cursor != 0 or not built:
+        return None
+    pattern = tuple(reversed(built))
+    if not _pattern_is_legal(group, pipe, pattern):
+        return None
+    return pattern
+
+
+def _repeat_count(stock: int, segment: int, kerf: int, kerf_mode: str) -> int:
+    if segment <= 0 or not _fits(stock, (segment,), kerf, kerf_mode):
+        return 0
+    best = 1
+    low, high = 2, min(12, max(2, stock // segment))
+    while low <= high:
+        mid = (low + high) // 2
+        if _fits(stock, (segment,) * mid, kerf, kerf_mode):
+            best = mid
+            low = mid + 1
+        else:
+            high = mid - 1
+    return best
+
+
+def _dense_cuts(group: MaterialGroup, pipe_lengths: list[int], segments: list[int]) -> list[_CutCol]:
+    """Repeats and exact offcut fills. Pairs are only demanded pipe lengths."""
+
+    kerf = group.blade_margin
+    mode = group.kerf_mode
+    found: list[_CutCol] = []
+    seen: set[tuple[int, tuple[int, ...]]] = set()
+    segment_set = set(segments)
+
+    def add(stock: int, parts: tuple[int, ...]) -> None:
+        ordered = tuple(sorted(parts))
+        key = (stock, ordered)
+        if key in seen or not ordered:
+            return
+        if _fits(stock, ordered, kerf, mode):
+            seen.add(key)
+            found.append(_CutCol(stock, ordered, {"native-seed"}))
+
+    for stock in group.stocks:
+        width = stock.length
+        for length in segments:
+            copies = _repeat_count(width, length, kerf, mode)
+            if copies >= 1:
+                add(width, (length,) * copies)
+            if copies > 2:
+                add(width, (length,) * 2)
+            residual = width - kerf - length
+            if residual > 0 and residual in segment_set and length <= width:
+                add(width, (length, residual))
+        for left in pipe_lengths:
+            for right in pipe_lengths:
+                if right < left:
+                    continue
+                add(width, (left, right))
+            for part in segments:
+                if part == left:
+                    continue
+                add(width, (left, part))
+    return found
+
+
+def _fill_ratio(column: _CutCol, kerf: int, kerf_mode: str) -> float:
+    between = kerf * max(0, len(column.parts) - 1)
+    extra = 0
+    remainder = column.stock_length - sum(column.parts) - between
+    if kerf_mode == "WITH_REMAINDER" and remainder > 0:
+        extra = kerf
+    if column.stock_length <= 0:
+        return 0.0
+    return (sum(column.parts) + between + extra) / column.stock_length
+
+
+def _limit_welds(columns: list[_WeldCol], limit: int) -> tuple[list[_WeldCol], bool]:
+    merged = _merge_welds(columns)
+    stable = [column for column in merged if "stable-incumbent" in column.sources]
+    if len(merged) <= limit or len(stable) >= limit:
+        return (stable if len(stable) >= limit else merged), len(merged) > limit
+    rest = [column for column in merged if "stable-incumbent" not in column.sources]
+    rest.sort(key=lambda column: (len(column.parts), column.pipe_index, column.parts))
+    return stable + rest[: limit - len(stable)], True
+
+
+def _limit_cuts(group: MaterialGroup, columns: list[_CutCol], limit: int) -> tuple[list[_CutCol], bool]:
+    merged = _merge_cuts(columns)
+    stable = [column for column in merged if "stable-incumbent" in column.sources]
+    if len(merged) <= limit or len(stable) >= limit:
+        return (stable if len(stable) >= limit else merged), len(merged) > limit
+    rest = [column for column in merged if "stable-incumbent" not in column.sources]
+    rest.sort(
+        key=lambda column: (
+            -_fill_ratio(column, group.blade_margin, group.kerf_mode),
+            len(column.parts),
+            column.stock_length,
+            column.parts,
+        )
+    )
+    return stable + rest[: limit - len(stable)], True
+
+
+def _price_cut_batch(
+    group: MaterialGroup,
+    cuts: list[_CutCol],
+    welds: list[_WeldCol],
+    duals: dict[str, Any],
+    deadline: float,
+) -> list[_CutCol]:
+    """Several negative-reduced-cost patterns per stock, not a single knapsack column."""
+
+    pi: dict[int, float] = duals["pi"]
+    segments = sorted({part for column in welds for part in column.parts} | set(pi))
+    if not segments:
+        return []
+    base_values = [float(pi.get(segment, 0.0)) for segment in segments]
+    existing = {(column.stock_length, column.parts) for column in cuts}
+    fresh: list[_CutCol] = []
+    index_of = {segment: index for index, segment in enumerate(segments)}
+    for stock in group.stocks:
+        if time.monotonic() > deadline:
+            break
+        values = list(base_values)
+        seen_here: set[tuple[int, ...]] = set()
+        for _rank in range(PATTERNS_PER_STOCK):
+            if time.monotonic() > deadline:
+                break
+            pattern, _truncated, _nodes = knapsack_best_pattern(
+                stock.length,
+                segments,
+                values,
+                kerf=group.blade_margin,
+                kerf_mode=group.kerf_mode,
+                node_budget=40_000,
+                deadline=deadline,
+            )
+            if pattern is None or pattern in seen_here:
+                break
+            seen_here.add(pattern)
+            column = _CutCol(stock.length, pattern, {"pricing"})
+            if _cut_reduced_cost(column, duals) >= -RC_EPS:
+                break
+            if (column.stock_length, column.parts) not in existing:
+                fresh.append(column)
+                existing.add((column.stock_length, column.parts))
+            for part in pattern:
+                slot = index_of.get(part)
+                if slot is not None:
+                    values[slot] *= 0.5
+    return fresh
+
+
+def _price_long_welds(
+    group: MaterialGroup,
+    welds: list[_WeldCol],
+    duals: dict[str, Any],
+    candidates: list[int],
+    deadline: float,
+) -> list[_WeldCol]:
+    max_stock = max(stock.length for stock in group.stocks)
+    existing = {(column.pipe_index, column.parts) for column in welds}
+    fresh: list[_WeldCol] = []
+    unknown = max([0.0, *[float(value) for value in duals["pi"].values()]], default=0.0)
+    for pipe_index, pipe in enumerate(group.pipes):
+        if time.monotonic() > deadline or pipe.length <= max_stock:
+            continue
+        pattern = _best_weld_pattern(group, pipe, candidates, duals)
+        if pattern is None or (pipe_index, pattern) in existing:
+            continue
+        column = _WeldCol(pipe_index, pattern, {"pricing"})
+        if _weld_reduced_cost(column, duals, unknown_price=unknown) < -RC_EPS:
+            fresh.append(column)
+            existing.add((pipe_index, pattern))
+    return fresh
+
+
 def _extend_pool(
     group: MaterialGroup,
     welds: list[_WeldCol],
     cuts: list[_CutCol],
     deadline: float,
 ) -> tuple[list[_WeldCol], list[_CutCol]]:
-    stocks = [stock.length for stock in group.stocks]
-    quantities = {stock.length: stock.quantity for stock in group.stocks}
-    pipe_nodes = max(1, SEED_NODE_BUDGET // max(1, len(group.pipes)))
-    for pipe_index, pipe in enumerate(group.pipes):
-        if time.monotonic() >= deadline:
-            break
-        patterns, _truncated = _seed_weld_patterns(
-            pipe,
-            stocks,
-            kerf=group.blade_margin,
-            min_weld=group.min_weld_distance,
-            min_cut=group.min_cut_length,
-            budget=_Budget(deadline, pipe_nodes),
-        )
-        for parts in patterns:
-            welds.append(_WeldCol(pipe_index, parts, {"native-seed"}))
-    welds = _merge_welds(welds)
-    segments = sorted({part for column in welds for part in column.parts})
-    if segments and time.monotonic() < deadline:
-        for stock, parts in _seed_cut_patterns(
-            stocks,
-            quantities,
-            segments,
-            kerf=group.blade_margin,
-            kerf_mode=group.kerf_mode,
-            budget=_Budget(deadline, CUT_NODE_BUDGET),
-            repeated_patterns=[column.parts for column in welds],
-        ):
-            cuts.append(_CutCol(stock, parts, {"native-seed"}))
-        cuts = _merge_cuts(cuts)
-        pack_budget = _Budget(deadline, CUT_NODE_BUDGET)
-        for stock in group.stocks:
-            if pack_budget.expired or time.monotonic() >= deadline:
+    """Build a capped material pool. Stats are stored on the function for the log."""
+
+    capped = False
+    rounds = 0
+    if time.monotonic() < deadline:
+        candidates = _candidate_lengths(group, welds)
+        pipe_lengths = _pipe_lengths(group)
+        stocks = [stock.length for stock in group.stocks]
+        for pipe_index, pipe in enumerate(group.pipes):
+            if time.monotonic() >= deadline:
                 break
-            pattern, _truncated, nodes = knapsack_best_pattern(
-                stock.length,
-                segments,
-                [float(segment) for segment in segments],
+            for parts in _complement_welds(group, pipe, candidates):
+                welds.append(_WeldCol(pipe_index, parts, {"native-seed"}))
+            patterns, _truncated = _seed_weld_patterns(
+                pipe,
+                stocks,
                 kerf=group.blade_margin,
-                kerf_mode=group.kerf_mode,
-                node_budget=max(1, pack_budget.node_limit // max(1, len(group.stocks))),
-                deadline=deadline,
+                min_weld=group.min_weld_distance,
+                min_cut=group.min_cut_length,
+                budget=_Budget(deadline, 2_000),
             )
-            pack_budget.nodes += nodes
-            if pattern is not None:
-                cuts.append(_CutCol(stock.length, pattern, {"pricing"}))
+            for parts in patterns[:12]:
+                welds.append(_WeldCol(pipe_index, parts, {"native-seed"}))
+        welds, weld_capped = _limit_welds(welds, MAX_WELD_COLUMNS)
+        capped = capped or weld_capped
+        frequency: dict[int, int] = defaultdict(int)
+        for column in welds:
+            for part in column.parts:
+                frequency[part] += 1
+        segments = sorted(frequency, key=lambda part: (-frequency[part], -part))
+        # Cut seeding follows the weld alphabet. The fill cap below drops the
+        # sparse singleton columns that made the round-1 master unsearchable.
+        cuts.extend(_dense_cuts(group, pipe_lengths, segments[:CANDIDATE_LENGTH_CAP]))
+        cuts, cut_capped = _limit_cuts(group, cuts, MAX_CUT_COLUMNS)
+        capped = capped or cut_capped
+        for _round in range(PRICING_ROUNDS):
+            if time.monotonic() > deadline - 0.3:
+                break
+            duals = _lp_duals(
+                group,
+                welds,
+                cuts,
+                min(2.0, max(0.05, deadline - time.monotonic())),
+            )
+            if duals is None:
+                break
+            new_welds = _price_long_welds(group, welds, duals, candidates, deadline)
+            new_cuts = _price_cut_batch(group, cuts, welds, duals, deadline)
+            if not new_welds and not new_cuts:
+                break
+            rounds += 1
+            welds, weld_capped = _limit_welds(welds + new_welds, MAX_WELD_COLUMNS)
+            cuts, cut_capped = _limit_cuts(group, cuts + new_cuts, MAX_CUT_COLUMNS)
+            capped = capped or weld_capped or cut_capped
+    else:
+        welds = _merge_welds(welds)
         cuts = _merge_cuts(cuts)
-    price_budget = _Budget(deadline, 80_000)
-    for _round in range(3):
-        if time.monotonic() > deadline - 0.2:
-            break
-        duals = _lp_duals(
-            group,
-            welds,
-            cuts,
-            min(1.5, max(0.05, deadline - time.monotonic())),
-        )
-        if duals is None:
-            break
-        new_welds = _price_welds(group, welds, duals, price_budget)
-        new_cuts = _price_cuts(group, cuts, welds, duals, price_budget)
-        if not new_welds and not new_cuts:
-            break
-        welds = _merge_welds(welds + new_welds)
-        cuts = _merge_cuts(cuts + new_cuts)
+    _extend_pool.stats = {"rounds": rounds, "capped": capped}  # type: ignore[attr-defined]
     return welds, cuts
 
 
@@ -522,6 +858,9 @@ def optimize_group(
         log["reason"] = f"定价失败 {type(exc).__name__}: {exc}"
         log["seconds"] = round(time.monotonic() - started, 3)
         return solved, log
+    pool_stats = getattr(_extend_pool, "stats", {})
+    log["pricing_rounds"] = int(pool_stats.get("rounds", 0))
+    log["column_capped"] = bool(pool_stats.get("capped", False))
     pricing_seconds = time.monotonic() - started
     material_mip = max(0.0, material_budget - pricing_seconds)
     log["weld_columns"] = len(welds)
