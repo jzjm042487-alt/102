@@ -184,6 +184,9 @@ def test_complement_split_cuts_the_bar_count() -> None:
     assert int(kept["metrics"]["used_stock_length"]) < int(solved["metrics"]["used_stock_length"])
     assert kept["metrics"]["lexicographic_optimal"] is False
     assert log["cut_columns"] <= 2400
+    material = next(layer for layer in log["layers"] if layer["objective"] == "used_stock_length")
+    assert material["dual_bound"] is not None
+    assert material["dual_bound"] <= int(kept["metrics"]["used_stock_length"]) + 1e-6
 
 
 def test_cut_cap_keeps_the_incumbent_and_a_full_pattern() -> None:

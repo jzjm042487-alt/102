@@ -87,6 +87,25 @@ COLUMNS = [
     "最终校验",
     "利用率",
 ]
+BOUND_COLUMNS = [
+    "优化预算",
+    "层1状态",
+    "层1下界",
+    "层1根下界",
+    "层1节点",
+    "层2状态",
+    "层2下界",
+    "层2根下界",
+    "层2节点",
+    "层3拼法状态",
+    "层3拼法下界",
+    "层3拼法根下界",
+    "层3拼法节点",
+    "层3切法状态",
+    "层3切法下界",
+    "层3切法根下界",
+    "层3切法节点",
+]
 
 _RECORDS: list[dict] | None = None
 
@@ -177,6 +196,50 @@ def _case_layer(logs: list[dict], objective: str) -> tuple[str, str, str]:
     return _fmt_key(keys), f"{seconds:.3f}", "是" if improved else "否"
 
 
+def _task_layers(task: dict[str, str]) -> tuple[float, float, float]:
+    raw = task.get("layer_seconds") or ""
+    if not raw:
+        return LAYER
+    parts = tuple(float(item) for item in raw.split(","))
+    if len(parts) != 3 or any(item < 0 for item in parts):
+        raise ValueError(f"layer_seconds must be three non-negative numbers, got {raw}")
+    return parts
+
+
+def _bound_cell(logs: list[dict], objective: str) -> tuple[str, str, str, str]:
+    """Sum SCIP bounds across groups. A missing bound leaves the cells blank."""
+
+    dual = 0.0
+    root = 0.0
+    nodes = 0
+    statuses: list[str] = []
+    seen = False
+    missing = False
+    missing_root = False
+    for log in logs:
+        for layer in log.get("layers") or []:
+            if layer.get("objective") != objective:
+                continue
+            seen = True
+            statuses.append(str(layer.get("status") or ""))
+            if layer.get("nodes") is not None:
+                nodes += int(layer["nodes"])
+            if layer.get("dual_bound") is None:
+                missing = True
+            else:
+                dual += float(layer["dual_bound"])
+            if layer.get("root_lp_bound") is None:
+                missing_root = True
+            else:
+                root += float(layer["root_lp_bound"])
+    if not seen:
+        return "", "", "", ""
+    status = "+".join(statuses)
+    dual_text = "" if missing else f"{dual:.4f}"
+    root_text = "" if missing_root else f"{root:.4f}"
+    return status, dual_text, root_text, str(nodes)
+
+
 def solve_case(task: dict[str, str]) -> dict[str, str]:
     from app.engine_stable_opt import apply_optimization, lex_key
     from app.solver import solve_payload
@@ -187,7 +250,7 @@ def solve_case(task: dict[str, str]) -> dict[str, str]:
     record = records[index]
     raw = record["MOMPROBLEMJSON"]
     problem = json.loads(raw) if isinstance(raw, str) else raw
-    row = {column: "" for column in COLUMNS}
+    row = {column: "" for column in [*COLUMNS, *BOUND_COLUMNS]}
     row["case_id"] = task["case_id"]
     row["record_index"] = task["record_index"]
     row["集合"] = task.get("集合", "")
@@ -207,8 +270,16 @@ def solve_case(task: dict[str, str]) -> dict[str, str]:
     def _hard_stop(_signum, _frame):
         raise TimeoutError("优化试算到达硬时限")
 
+    layers = _task_layers(task)
+    if task.get("layer_seconds"):
+        row["优化预算"] = f"{sum(layers):.0f}"
+    alarm = ALARM
+    if task.get("layer_seconds"):
+        # SCIP's own limit stops each layer and keeps the incumbent. The alarm
+        # is only a backstop past that hard cap.
+        alarm = CHAIN + CPSAT + ONDEMAND + sum(layers) + 180.0
     signal.signal(signal.SIGALRM, _hard_stop)
-    signal.setitimer(signal.ITIMER_REAL, ALARM)
+    signal.setitimer(signal.ITIMER_REAL, alarm)
     try:
         stable_started = time.monotonic()
         result = solve_payload(
@@ -238,7 +309,7 @@ def solve_case(task: dict[str, str]) -> dict[str, str]:
         if all(item is not None for item in legacy_values):
             legacy = tuple(int(item) for item in legacy_values)
             row["起点词典序"] = _lex(baseline, legacy)
-        optimized, logs = apply_optimization(prepared, result, LAYER)
+        optimized, logs = apply_optimization(prepared, result, layers)
         final_report = verify_solution(prepared, optimized)
         final = lex_key(optimized["summary"])
         row["最终校验"] = "是" if final_report.get("passed") is True else "否"
@@ -273,6 +344,19 @@ def solve_case(task: dict[str, str]) -> dict[str, str]:
         row["优化用时"] = f"{sum(float(log.get('seconds') or 0.0) for log in logs):.3f}"
         row["焊列数"] = str(sum(int(log.get("weld_columns") or 0) for log in logs))
         row["切列数"] = str(sum(int(log.get("cut_columns") or 0) for log in logs))
+        if task.get("layer_seconds"):
+            row["优化预算"] = f"{sum(layers):.0f}"
+            for column, objective in (
+                ("层1", "used_stock_length"),
+                ("层2", "welding_joint_quantity"),
+                ("层3拼法", "welding_pattern_type_quantity"),
+                ("层3切法", "cutting_pattern_type_quantity"),
+            ):
+                status, dual, root, nodes = _bound_cell(logs, objective)
+                row[f"{column}状态"] = status
+                row[f"{column}下界"] = dual
+                row[f"{column}根下界"] = root
+                row[f"{column}节点"] = nodes
         if all(item is not None for item in legacy_values):
             legacy = tuple(int(item) for item in legacy_values)
             row["最终词典序"] = _lex(final, legacy)
@@ -377,28 +461,50 @@ def _summarize(path: Path) -> None:
         )
 
 
+def _scaled_layers(total_seconds: float) -> tuple[float, float, float]:
+    """Keep the round-2 40:20:20 split. Only the total budget changes."""
+
+    if total_seconds <= 0:
+        raise SystemExit("--opt-seconds must be positive")
+    return (total_seconds * 0.5, total_seconds * 0.25, total_seconds * 0.25)
+
+
 def main() -> int:
     global ACTIVE_SPLIT, ACTIVE_OUT
     parser = argparse.ArgumentParser()
     parser.add_argument("--workers", type=int, default=WORKERS)
     parser.add_argument("--split", type=Path, default=SPLIT_PATH)
     parser.add_argument("--out", type=Path, default=OUT)
+    parser.add_argument(
+        "--opt-seconds",
+        type=float,
+        default=0.0,
+        help="Hard cap for the post-pass, split 2:1:1 across the three layers. Default keeps LAYER_SECONDS.",
+    )
     args = parser.parse_args()
     ACTIVE_SPLIT = args.split if args.split.is_absolute() else ROOT / args.split
     ACTIVE_OUT = args.out if args.out.is_absolute() else ROOT / args.out
+    fieldnames = [*COLUMNS, *BOUND_COLUMNS] if args.opt_seconds else COLUMNS
+    scaled = _scaled_layers(args.opt_seconds) if args.opt_seconds else None
     tasks = _tasks()
+    if scaled is not None:
+        encoded = ",".join(f"{item:.6f}" for item in scaled)
+        for task in tasks:
+            task["layer_seconds"] = encoded
     done = _done(ACTIVE_OUT)
     queue = [task for task in tasks if task["case_id"] not in done]
+    shown = scaled if scaled is not None else LAYER
+    alarm = CHAIN + CPSAT + ONDEMAND + sum(shown) + (180.0 if scaled is not None else 20.0)
     print(
         f"pilot {ACTIVE_SPLIT.name} -> {ACTIVE_OUT.name} "
         f"{len(tasks)} done {len(done)} pending {len(queue)} "
-        f"workers {args.workers} alarm {ALARM:.0f}s layers {LAYER}",
+        f"workers {args.workers} alarm {alarm:.0f}s layers {shown}",
         flush=True,
     )
     ACTIVE_OUT.parent.mkdir(parents=True, exist_ok=True)
     new_file = not ACTIVE_OUT.exists()
     handle = ACTIVE_OUT.open("a", encoding="utf-8", newline="")
-    writer = csv.DictWriter(handle, fieldnames=COLUMNS)
+    writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
     if new_file:
         writer.writeheader()
         handle.flush()
@@ -419,7 +525,7 @@ def main() -> int:
             try:
                 row = future.result()
             except Exception as exc:  # noqa: BLE001
-                row = {column: "" for column in COLUMNS}
+                row = {column: "" for column in fieldnames}
                 row["case_id"] = task["case_id"]
                 row["record_index"] = task["record_index"]
                 row["集合"] = task.get("集合", "")

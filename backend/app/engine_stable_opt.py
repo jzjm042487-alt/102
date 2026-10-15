@@ -685,6 +685,65 @@ def _install_start(
         return
 
 
+def _finite_bound(value: float) -> float | None:
+    if value != value or abs(value) >= 1e19:
+        return None
+    return value
+
+
+class _RootLpReader:
+    """Record the first LP objective. The callback only reads that value."""
+
+    def __init__(self) -> None:
+        self.root_lp: float | None = None
+
+    def eventinit(self) -> None:
+        from pyscipopt import SCIP_EVENTTYPE
+
+        self.model.catchEvent(SCIP_EVENTTYPE.FIRSTLPSOLVED, self)
+
+    def eventexit(self) -> None:
+        return None
+
+    def eventexec(self, event: Any) -> None:
+        if self.root_lp is not None:
+            return
+        try:
+            value = _finite_bound(float(self.model.getLPObjVal()))
+        except Exception:
+            return
+        self.root_lp = value
+
+
+def _scip_bounds(model: Any, root_lp: float | None) -> dict[str, Any]:
+    """Read the bounds SCIP already proved. This does not change the search."""
+
+    def read(method: str) -> float | None:
+        try:
+            return _finite_bound(float(getattr(model, method)()))
+        except Exception:
+            return None
+
+    nodes = None
+    try:
+        nodes = int(model.getNNodes())
+    except Exception:
+        pass
+    seconds = None
+    try:
+        seconds = round(float(model.getSolvingTime()), 3)
+    except Exception:
+        pass
+    return {
+        "dual_bound": read("getDualbound"),
+        "root_lp_bound": root_lp,
+        "primal_bound": read("getPrimalbound"),
+        "nodes": nodes,
+        "scip_seconds": seconds,
+        "status": str(model.getStatus()).lower(),
+    }
+
+
 def _optimize_objective(
     group: MaterialGroup,
     welds: list[_WeldCol],
@@ -695,13 +754,20 @@ def _optimize_objective(
     start_x: list[int] | None,
     start_y: list[int] | None,
 ) -> dict[str, Any] | None:
+    _optimize_objective.last_bounds = None  # type: ignore[attr-defined]
     if seconds <= 0 or not welds or not cuts:
         return None
     model, x_vars, y_vars, expressions = _build_master(
         group, welds, cuts, seconds, locks, start_x, start_y
     )
     model.setObjective(expressions[objective], "minimize")
+    from pyscipopt import Eventhdlr
+
+    reader = type("_BoundReader", (_RootLpReader, Eventhdlr), {})()
+    model.includeEventhdlr(reader, "opt-root-lp", "record the first LP objective")
     model.optimize()
+    bounds = _scip_bounds(model, reader.root_lp)
+    _optimize_objective.last_bounds = bounds  # type: ignore[attr-defined]
     if model.getNSols() <= 0:
         return None
     solution = model.getBestSol()
@@ -715,6 +781,7 @@ def _optimize_objective(
         "y": y_values,
         "key": tuple(key),
         "status": str(model.getStatus()).lower(),
+        "bounds": bounds,
     }
 
 
@@ -892,6 +959,7 @@ def optimize_group(
         entered = best_key
         improved = False
         status = "skipped"
+        bounds = None
         try:
             found = _optimize_objective(
                 group, welds, cuts, objective, budget, locks, best_x, best_y
@@ -902,6 +970,7 @@ def optimize_group(
             log["reason"] = f"{objective} {exc}"
         if found is not None:
             status = found["status"]
+            bounds = found.get("bounds")
             if not _quantities_feasible(group, welds, cuts, found["x"], found["y"]):
                 status = f"rejected:infeasible:{status}"
             else:
@@ -912,6 +981,10 @@ def optimize_group(
                     best_x, best_y = found["x"], found["y"]
                 else:
                     status = f"rejected:{status}"
+        elif status == "skipped":
+            bounds = getattr(_optimize_objective, "last_bounds", None)
+            if bounds and bounds.get("status"):
+                status = str(bounds["status"])
         if objective == "used_stock_length":
             locks = {"used_stock_length": best_key[0]}
         elif objective == "welding_joint_quantity":
@@ -922,16 +995,21 @@ def optimize_group(
                 "welding_joint_quantity": best_key[1],
                 "welding_pattern_type_quantity": best_key[2],
             }
-        log["layers"].append(
-            {
-                "objective": objective,
-                "seconds": round(time.monotonic() - stage_started, 3),
-                "accepted": improved,
-                "status": status,
-                "entered": list(entered),
-                "key": list(best_key),
-            }
-        )
+        layer_log = {
+            "objective": objective,
+            "seconds": round(time.monotonic() - stage_started, 3),
+            "accepted": improved,
+            "status": status,
+            "entered": list(entered),
+            "key": list(best_key),
+        }
+        if bounds:
+            layer_log["dual_bound"] = bounds.get("dual_bound")
+            layer_log["root_lp_bound"] = bounds.get("root_lp_bound")
+            layer_log["primal_bound"] = bounds.get("primal_bound")
+            layer_log["nodes"] = bounds.get("nodes")
+            layer_log["scip_seconds"] = bounds.get("scip_seconds")
+        log["layers"].append(layer_log)
     log["pricing_seconds"] = round(pricing_seconds, 3)
     log["final"] = list(best_key)
     if best_key > baseline_key:
