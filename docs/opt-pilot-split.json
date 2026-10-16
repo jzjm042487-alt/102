@@ -1,0 +1,14 @@
+{
+  "purpose": "Frozen pilot for the lexicographic post-pass. Selected before any optimization run.",
+  "selection_rule": "Round-5 feasible and verifier-passed, legacy plan geometrically compliant, record index not in the seed-20261013 blind split, lexicographic loss versus legacy. Rank by (used-length delta, joint delta, weld-type delta, cut-type delta) descending and take 50.",
+  "source_csv": "docs/stable-round5-vs-legacy.csv",
+  "blind_split": "docs/stable-round3-split.json",
+  "count": 50,
+  "record_indexes": [
+    2545, 2906, 2791, 2436, 2793, 3080, 214, 240, 1764, 3153,
+    56, 1955, 2818, 599, 179, 583, 600, 3049, 1004, 2931,
+    3019, 3021, 3129, 1361, 2006, 2769, 2161, 253, 2244, 2286,
+    2783, 1031, 2334, 2856, 2474, 2162, 1756, 1864, 2886, 2888,
+    2914, 2584, 2885, 2213, 774, 2481, 2946, 1140, 2587, 1601
+  ]
+}
