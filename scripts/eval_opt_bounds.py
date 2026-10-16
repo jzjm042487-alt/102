@@ -556,34 +556,41 @@ def main() -> int:
         writer.writeheader()
         handle.flush()
     if queue:
+        # A fresh process per batch returns SCIP's memory to the OS. Reusing a
+        # worker kept multi-gigabyte heaps after each case.
         context = multiprocessing.get_context("spawn")
         wrote = 0
-        with ProcessPoolExecutor(
-            max_workers=max(1, args.workers),
-            mp_context=context,
-            initializer=_init,
-        ) as pool:
-            futures = {pool.submit(solve_case, task): task for task in queue}
-            for future in as_completed(futures):
-                task = futures[future]
-                try:
-                    row = future.result()
-                except Exception as exc:  # noqa: BLE001
+        pending = list(queue)
+        width = max(1, args.workers)
+        while pending:
+            batch = pending[:width]
+            pending = pending[width:]
+            with ProcessPoolExecutor(
+                max_workers=width,
+                mp_context=context,
+                initializer=_init,
+            ) as pool:
+                futures = {pool.submit(solve_case, task): task for task in batch}
+                for future in as_completed(futures):
+                    task = futures[future]
+                    try:
+                        row = future.result()
+                    except Exception as exc:  # noqa: BLE001
+                        print(
+                            f"retry later {task['record_index']} "
+                            f"{type(exc).__name__}: {exc}",
+                            flush=True,
+                        )
+                        continue
+                    writer.writerow(row)
+                    handle.flush()
+                    wrote += 1
                     print(
-                        f"retry later {task['record_index']} "
-                        f"{type(exc).__name__}: {exc}",
+                        f"wrote {wrote}/{len(queue)} {row['record_index']} "
+                        f"match {row['用料一致']} lb1 {row['LB1']} ip {row['LB1整数解']} "
+                        f"lb2 {row['LB2']} wall {row['界用时']} {row['备注']}",
                         flush=True,
                     )
-                    continue
-                writer.writerow(row)
-                handle.flush()
-                wrote += 1
-                print(
-                    f"wrote {wrote}/{len(queue)} {row['record_index']} "
-                    f"match {row['用料一致']} lb1 {row['LB1']} ip {row['LB1整数解']} "
-                    f"lb2 {row['LB2']} wall {row['界用时']} {row['备注']}",
-                    flush=True,
-                )
     handle.close()
     summarize(out)
     return 0
